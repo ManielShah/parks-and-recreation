@@ -1,0 +1,31 @@
+.page { max-width: 900px; }
+.title { font-size: 36px; }
+.card { gap: 0; }
+.heading { margin-bottom: 8px; }
+.empty { font-size: 15px; color: var(--color-ink-muted); padding: 8px 0 12px; }
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 16px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 0;
+  border-top: 1px solid var(--color-border-faint);
+}
+.info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.name { font-size: 16px; font-weight: 700; }
+.sub { font-size: 14px; color: var(--color-ink-muted); }
+.pos { font-size: 14px; font-weight: 600; color: var(--color-blue); }
+.offer {
+  composes: row;
+  padding: 14px;
+  margin-bottom: 8px;
+  border-top: 0;
+  border-radius: var(--radius-lg);
+  background: var(--color-green-tint);
+  color: var(--color-green-ink);
+}
+.offer .sub { color: var(--color-green-ink); }
+.offerTimer { font-size: 14px; font-weight: 600; }
+.buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.fine { font-size: 13px; line-height: 1.5; color: var(--color-ink-muted); padding-top: 10px; }

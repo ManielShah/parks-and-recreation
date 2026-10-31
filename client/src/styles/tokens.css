@@ -1,0 +1,56 @@
+/* Design tokens from the Cedar Valley registration design. Components read these, never raw hex. */
+:root {
+  --font-body: Inter, system-ui, sans-serif;
+  --font-display: 'Bricolage Grotesque', Inter, sans-serif;
+
+  --color-ground: #f6f7f3;
+  --color-surface: #ffffff;
+  --color-surface-muted: #eef0eb;
+  --color-surface-disabled: #f1f3ee;
+  --color-ink: #13241e;
+  --color-ink-soft: #2e3d37;
+  --color-ink-muted: #55615b;
+  --color-ink-disabled: #545e58;
+  --color-border: #dde1d9;
+  --color-border-strong: #bfc7bc;
+  --color-border-faint: #eef0eb;
+  --color-border-dashed: #cbd1c8;
+
+  --color-forest: #13362c;
+  --color-forest-soft: #9fd3a9;
+  --color-nav-active: #eef2ec;
+
+  --color-blue: #1d5fd1;
+  --color-blue-hover: #164aa6;
+  --color-blue-tint: #e6eefb;
+  --color-blue-ink: #163f87;
+  --color-blue-border: #bed0f2;
+
+  --color-green: #1e6b3e;
+  --color-green-tint: #e3f1e7;
+  --color-green-ink: #14502d;
+  --color-green-border: #b9dcc4;
+  --color-green-border-strong: #8dbf9c;
+
+  --color-orange: #a3410c;
+  --color-orange-fill: #e8894f;
+  --color-orange-tint: #fcebdd;
+  --color-orange-ink: #7e3209;
+  --color-orange-border: #f2c7a6;
+
+  --color-dot-open-border: #8e9a93;
+  --color-track: #e3e8e1;
+
+  --radius-sm: 8px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-pill: 999px;
+
+  --shadow-raised: 0 8px 24px rgba(19, 36, 30, 0.08);
+  --shadow-toast: 0 10px 30px rgba(19, 36, 30, 0.16);
+
+  --page-max: 1200px;
+  --gutter: 24px;
+  --touch: 44px;
+}

@@ -1,0 +1,45 @@
+.toast {
+  position: fixed;
+  top: 80px;
+  right: 16px;
+  z-index: 40;
+  width: 420px;
+  max-width: calc(100% - 32px);
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 14px 12px 14px 16px;
+  border-radius: 14px;
+  font-size: 14px;
+  line-height: 1.5;
+  box-shadow: var(--shadow-toast);
+  border: 1px solid;
+}
+.good { background: var(--color-green-tint); color: var(--color-green-ink); border-color: var(--color-green-border); }
+.warn { background: var(--color-orange-tint); color: var(--color-orange-ink); border-color: var(--color-orange-border); }
+.info { background: var(--color-blue-tint); color: var(--color-blue-ink); border-color: var(--color-blue-border); }
+.icon { flex: 0 0 20px; margin-top: 2px; display: flex; }
+.body { flex: 1 1 auto; display: flex; flex-direction: column; gap: 8px; }
+.action {
+  align-self: flex-start;
+  min-height: 36px;
+  padding: 0 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+  font-weight: 600;
+}
+.dismiss {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}

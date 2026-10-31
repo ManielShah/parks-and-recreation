@@ -1,0 +1,38 @@
+.page { max-width: 760px; margin: 0 auto; padding: 48px var(--gutter) 64px; }
+.card { border-radius: 20px; padding: 32px; gap: 18px; }
+.check {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-pill);
+  background: var(--color-green-tint);
+  color: var(--color-green);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.title { font-size: 34px; }
+.lead { margin: 0; font-size: 16px; line-height: 1.55; color: var(--color-ink-soft); }
+.list { display: flex; flex-direction: column; }
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  justify-content: space-between;
+  padding: 14px 0;
+  border-top: 1px solid var(--color-border-faint);
+}
+.left, .right { display: flex; flex-direction: column; gap: 2px; }
+.right { align-items: flex-end; }
+.name { font-size: 16px; font-weight: 700; }
+.sub { font-size: 14px; color: var(--color-ink-muted); }
+.small { font-size: 13px; color: var(--color-ink-muted); }
+.price { font-size: 15px; font-weight: 600; }
+.total {
+  display: flex;
+  justify-content: space-between;
+  padding-top: 14px;
+  border-top: 1px solid var(--color-border);
+  font-size: 17px;
+  font-weight: 700;
+}
+.actions { display: flex; flex-wrap: wrap; gap: 10px; }

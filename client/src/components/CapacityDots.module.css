@@ -1,0 +1,15 @@
+.dots { display: flex; gap: 6px; }
+.dot, .swatch {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-pill);
+  display: inline-block;
+}
+.swatch { width: 12px; height: 12px; }
+.taken { background: var(--color-ink); }
+.mine { background: var(--color-blue); }
+.held { background: var(--color-orange-fill); border: 2px solid var(--color-orange); }
+.open { background: var(--color-surface); border: 2px solid var(--color-dot-open-border); }
+
+.legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--color-ink-muted); }
+.legend span[role='listitem'] { display: flex; align-items: center; gap: 6px; }

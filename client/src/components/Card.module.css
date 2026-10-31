@@ -1,0 +1,12 @@
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  display: flex;
+  flex-direction: column;
+}
+.pad { padding: 20px; gap: 14px; }
+.padWide { padding: 20px 24px; gap: 12px; }
+.flush { overflow: hidden; }
+.title { font-size: 20px; }
+.titleLarge { font-size: 22px; }

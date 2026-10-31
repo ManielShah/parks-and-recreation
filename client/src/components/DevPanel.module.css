@@ -1,0 +1,41 @@
+.dock { position: fixed; right: 16px; bottom: 16px; z-index: 30; max-width: calc(100% - 32px); }
+.panel {
+  width: 300px;
+  max-width: 100%;
+  background: var(--color-ink);
+  color: var(--color-ground);
+  border-radius: 14px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
+}
+.head { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 14px; font-weight: 700; }
+.note { font-size: 12px; line-height: 1.5; color: #c9d3cd; }
+.collapse {
+  width: 36px; height: 36px; border: 0; border-radius: var(--radius-sm);
+  background: #24413a; color: var(--color-ground);
+  display: flex; align-items: center; justify-content: center;
+}
+.control {
+  min-height: 40px;
+  border-radius: var(--radius-sm);
+  border: 1px solid #3b5a51;
+  background: #1c3a31;
+  color: var(--color-ground);
+  font-size: 13px;
+  font-weight: 600;
+}
+.reset { composes: control; border-color: var(--color-ground); background: var(--color-ground); color: var(--color-ink); font-weight: 700; }
+.open {
+  min-height: var(--touch);
+  padding: 0 16px;
+  border-radius: var(--radius-pill);
+  border: 0;
+  background: var(--color-ink);
+  color: var(--color-ground);
+  font-size: 13px;
+  font-weight: 700;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.2);
+}

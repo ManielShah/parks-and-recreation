@@ -1,0 +1,31 @@
+.button {
+  min-height: var(--touch);
+  padding: 0 18px;
+  border-radius: var(--radius-md);
+  font-size: 15px;
+  font-weight: 600;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: 1px solid transparent;
+}
+.compact { padding: 0 14px; font-size: 14px; }
+.large { min-height: 52px; border-radius: var(--radius-lg); font-size: 16px; font-weight: 700; }
+
+.primary { background: var(--color-blue); color: #fff; border-color: var(--color-blue); }
+.dark { background: var(--color-forest); color: #fff; border-color: var(--color-forest); }
+.secondary { background: var(--color-surface); color: var(--color-ink); border-color: var(--color-border-strong); }
+.success { background: var(--color-green); color: #fff; border-color: var(--color-green); }
+.successOutline { background: var(--color-surface); color: var(--color-green-ink); border-color: var(--color-green-border-strong); }
+.link {
+  background: transparent; border: 0; padding: 0 4px; color: var(--color-blue); text-decoration: none;
+}
+.underline { text-decoration: underline; }
+
+.button:disabled {
+  background: var(--color-surface-muted);
+  color: var(--color-ink-disabled);
+  border-color: #e1e5dd;
+}
