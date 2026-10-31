@@ -63,15 +63,8 @@ export function createApp() {
   }));
 
   app.post('/api/waitlist', wrap(async (req, res) => {
-    const { sectionId, childId, autoRegister } = sectionChild.extend({ autoRegister: z.boolean().default(false) }).parse(req.body);
-    res.status(201).json({ entry: await booking.joinWaitlist(familyOf(req), sectionId, childId, autoRegister, clock.now()) });
-  }));
-
-  app.patch('/api/waitlist/:id', wrap(async (req, res) => {
-    const { id } = idParam.parse(req.params);
-    const { autoRegister } = z.object({ autoRegister: z.boolean() }).parse(req.body);
-    await booking.setWaitlistMode(familyOf(req), id, autoRegister);
-    res.status(204).end();
+    const { sectionId, childId } = sectionChild.parse(req.body);
+    res.status(201).json({ entry: await booking.joinWaitlist(familyOf(req), sectionId, childId, clock.now()) });
   }));
 
   app.put('/api/programs/:id/reminder', wrap(async (req, res) => {
@@ -92,7 +85,7 @@ export function createApp() {
 
   app.post('/api/offers/:id/accept', wrap(async (req, res) => {
     const { id } = idParam.parse(req.params);
-    res.json({ hold: await booking.acceptOffer(familyOf(req), id, clock.now()) });
+    res.status(201).json(await booking.acceptOffer(familyOf(req), id, clock.now()));
   }));
 
   app.post('/api/offers/:id/decline', wrap(async (req, res) => {

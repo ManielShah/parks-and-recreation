@@ -17,7 +17,6 @@ export function CapacityDots({ dots, label }: { dots: DotKind[]; label: string }
 const LEGEND: [DotKind, string][] = [
   ['taken', 'Taken'],
   ['mine', 'Yours'],
-  ['held', 'Held for another family'],
   ['open', 'Open'],
 ];
 

@@ -16,7 +16,7 @@ export function useActions() {
       if (!res) return false;
       showToast(
         res.lastSpot
-          ? { text: `You have the last spot in ${name(sectionId)}. Other families now see it as in someone’s cart. Check out within 5 minutes to keep it.`, tone: 'good', toCheckout: true }
+          ? { text: `You have the last spot in ${name(sectionId)}. Check out within 5 minutes to keep it.`, tone: 'good', toCheckout: true }
           : { text: `Added ${kid(childId)} to ${name(sectionId)}. The spot is held for 5 minutes.`, tone: 'good', toCheckout: true },
       );
       return true;
@@ -27,27 +27,14 @@ export function useActions() {
       showToast({ text: `Removed from your cart. The spot in ${name(sectionId)} was released.`, tone: 'info' });
     },
 
-    async joinWaitlist(sectionId: string, childId: string, autoRegister: boolean) {
-      const res = await run(() => api.joinWaitlist(sectionId, childId, autoRegister));
+    async joinWaitlist(sectionId: string, childId: string) {
+      const res = await run(() => api.joinWaitlist(sectionId, childId));
       if (!res) return false;
       showToast({
-        text: `${kid(childId)} is #${res.entry.position} on the waitlist for ${name(sectionId)}. ` +
-          (autoRegister
-            ? `If a spot opens, we’ll register ${kid(childId)} and charge your saved card automatically.`
-            : 'If a spot opens, we’ll text and email you, and you’ll have 2 hours to accept it.'),
+        text: `${kid(childId)} is #${res.entry.position} on the waitlist for ${name(sectionId)}. If a spot opens, we’ll text and email you, and you’ll have 2 hours to accept it. Nothing is charged unless you accept.`,
         tone: 'info',
       });
       return true;
-    },
-
-    async setWaitlistMode(entryId: string, sectionId: string, childId: string, autoRegister: boolean) {
-      if ((await run(() => api.setWaitlistMode(entryId, autoRegister))) === null) return;
-      showToast({
-        text: autoRegister
-          ? `${kid(childId)} will be registered and charged automatically if a spot opens in ${name(sectionId)}.`
-          : `We’ll notify you first if a spot opens in ${name(sectionId)}. You’ll have 2 hours to accept.`,
-        tone: 'info',
-      });
     },
 
     async setReminder(programId: string, on: boolean) {
@@ -64,11 +51,13 @@ export function useActions() {
       showToast({ text: `${kid(childId)} left the waitlist for ${name(sectionId)}.`, tone: 'info' });
     },
 
+    /** Accepting registers the child and charges the saved card right away. */
     async acceptOffer(holdId: string, childId: string | null) {
-      const res = await run(() => api.acceptOffer(holdId));
-      if (!res) return;
-      navigate('/checkout');
-      showToast({ text: `Spot accepted. Pay now to confirm ${kid(childId)}’s registration.`, tone: 'good' });
+      const order = await run(() => api.acceptOffer(holdId));
+      if (!order) return;
+      setLastOrder(order);
+      navigate('/checkout/done');
+      showToast({ text: `Spot accepted. ${kid(childId)} is registered and your saved card was charged.`, tone: 'good' });
     },
 
     async declineOffer(holdId: string, sectionId: string) {

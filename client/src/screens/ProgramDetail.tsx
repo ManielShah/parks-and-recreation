@@ -18,9 +18,6 @@ export function ProgramDetail({ model }: { model: Model }) {
   const actions = useActions();
   const [picked, setPicked] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  // The section whose "how should we handle it" waitlist form is open, and the choice in it.
-  const [joining, setJoining] = useState<string | null>(null);
-  const [joinAuto, setJoinAuto] = useState(false);
 
   const program = model.program(programId);
   if (!program) {
@@ -41,36 +38,19 @@ export function ProgramDetail({ model }: { model: Model }) {
   const opens = opening(model, program);
   const reminded = model.state.reminders.includes(program.id);
   const soon = !opens.open && opens.left < 24 * 60 * 60 * 1000;
-  const pickKid = (id: string) => {
-    setPicked(id);
-    setJoining(null);
-  };
 
   const act = async (v: SectionView) => {
     const a = v.action;
     setBusy(true);
     try {
       if (a.type === 'add' && selected) await actions.addToCart(v.id, selected.kid.id);
-      else if (a.type === 'waitlist') {
-        setJoining(v.id);
-        setJoinAuto(false);
-      } else if (a.type === 'cancelJoin') setJoining(null);
+      else if (a.type === 'waitlist' && selected) await actions.joinWaitlist(v.id, selected.kid.id);
       else if (a.type === 'accept') await actions.acceptOffer(a.holdId, model.live(v.id).holds.find((h) => h.id === a.holdId)?.childId ?? null);
       else if (a.type === 'leave') {
         const entry = model.state.waitlist.find((w) => w.id === a.entryId);
         if (entry) await actions.leaveWaitlist(entry.id, entry.sectionId, entry.childId);
       } else if (a.type === 'checkout') navigate('/checkout');
       else if (a.type === 'account') navigate('/account');
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const confirmJoin = async (sectionId: string) => {
-    if (!selected) return;
-    setBusy(true);
-    try {
-      if (await actions.joinWaitlist(sectionId, selected.kid.id, joinAuto)) setJoining(null);
     } finally {
       setBusy(false);
     }
@@ -117,7 +97,7 @@ export function ProgramDetail({ model }: { model: Model }) {
                   className={styles.kid}
                   disabled={!ok}
                   aria-pressed={selectedId === kid.id && ok}
-                  onClick={() => pickKid(kid.id)}
+                  onClick={() => setPicked(kid.id)}
                 >
                   <span className={styles.kidName}>{kid.name}</span>
                   <span className={styles.kidSub}>{reason}</span>
@@ -157,7 +137,7 @@ export function ProgramDetail({ model }: { model: Model }) {
               </div>
             )}
             {program.sections.map((s) => {
-              const v = sectionView(model, program, s, selected?.kid ?? null, Boolean(selected?.ok), joining === s.id);
+              const v = sectionView(model, program, s, selected?.kid ?? null, Boolean(selected?.ok));
               return (
                 <div className={styles.row} key={s.id}>
                   <div className={styles.when}>
@@ -176,32 +156,6 @@ export function ProgramDetail({ model }: { model: Model }) {
                   >
                     {v.action.label}
                   </Button>
-                  {v.showJoin && selected && (
-                    <fieldset className={styles.join}>
-                      <legend className={styles.joinTitle}>Join the waitlist for {selected.kid.name}</legend>
-                      <span className={styles.joinPrompt}>If a spot opens, how should we handle it?</span>
-                      <label className={styles.choice} htmlFor={`notify-${s.id}`}>
-                        <input type="radio" id={`notify-${s.id}`} name={`mode-${s.id}`} checked={!joinAuto} onChange={() => setJoinAuto(false)} />
-                        <span className={styles.choiceText}>
-                          <span className={styles.choiceTitle}>Notify me first (recommended)</span>
-                          <span className={styles.choiceDetail}>We text and email you. You have 2 hours to accept, then you pay. Nothing is charged until you do.</span>
-                        </span>
-                      </label>
-                      <label className={styles.choice} htmlFor={`auto-${s.id}`}>
-                        <input type="radio" id={`auto-${s.id}`} name={`mode-${s.id}`} checked={joinAuto} onChange={() => setJoinAuto(true)} />
-                        <span className={styles.choiceText}>
-                          <span className={styles.choiceTitle}>Register and charge me automatically</span>
-                          <span className={styles.choiceDetail}>
-                            If a spot opens, we register {selected.kid.name} right away and charge your saved card {money(program.priceCents)}. You can switch back to "notify me" anytime before a spot opens.
-                          </span>
-                        </span>
-                      </label>
-                      <div className={styles.joinActions}>
-                        <Button onClick={() => confirmJoin(s.id)} disabled={busy}>Join waitlist</Button>
-                        <Button variant="secondary" onClick={() => setJoining(null)}>Cancel</Button>
-                      </div>
-                    </fieldset>
-                  )}
                 </div>
               );
             })}
@@ -213,7 +167,7 @@ export function ProgramDetail({ model }: { model: Model }) {
           <div className={styles.steps}>
             <div className={styles.step}><span className={styles.stepNum}>1</span><span>Add a spot to your cart. It's held for 5 minutes while you check out, and other families see it as taken.</span></div>
             <div className={styles.step}><span className={styles.stepNum}>2</span><span>Pay before the timer runs out, or the spot goes back to the next family.</span></div>
-            <div className={styles.step}><span className={styles.stepNum}>3</span><span>Section full? Join the waitlist. When a spot opens, we text and email the first family in line, who has 2 hours to accept and pay. Or opt in to be registered and charged automatically.</span></div>
+            <div className={styles.step}><span className={styles.stepNum}>3</span><span>Section full? Join the waitlist. When a spot opens, we text and email the first family in line. They have 2 hours to accept, and their saved card is charged when they do. Nobody is charged without accepting.</span></div>
             <div className={styles.step}><span className={styles.stepNum}>4</span><span>Not open yet? Ask us to notify you, and we'll text and email you the moment registration opens.</span></div>
           </div>
         </Card>

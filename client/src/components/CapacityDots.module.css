@@ -8,7 +8,6 @@
 .swatch { width: 12px; height: 12px; }
 .taken { background: var(--color-ink); }
 .mine { background: var(--color-blue); }
-.held { background: var(--color-orange-fill); border: 2px solid var(--color-orange); }
 .open { background: var(--color-surface); border: 2px solid var(--color-dot-open-border); }
 
 .legend { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--color-ink-muted); }

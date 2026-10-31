@@ -27,35 +27,6 @@
 .openingCopy { display: flex; flex-direction: column; gap: 2px; font-size: 14px; line-height: 1.5; }
 .openingTitle { font-size: 15px; font-weight: 700; }
 
-.join {
-  flex: 1 1 100%;
-  margin: 4px 0 0;
-  padding: 16px;
-  border: 1px solid var(--color-blue-border);
-  border-radius: var(--radius-lg);
-  background: var(--color-blue-wash);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  min-width: 0;
-}
-.joinTitle { padding: 0 6px; font-size: 15px; font-weight: 700; }
-.joinPrompt { font-size: 14px; color: var(--color-ink-soft); }
-.choice {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  padding: 12px;
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  background: var(--color-surface);
-  cursor: pointer;
-}
-.choice input { margin: 3px 0 0; width: 18px; height: 18px; flex: 0 0 18px; }
-.choiceText { display: flex; flex-direction: column; gap: 2px; }
-.choiceTitle { font-size: 15px; font-weight: 600; }
-.choiceDetail { font-size: 13px; line-height: 1.5; color: var(--color-ink-muted); }
-.joinActions { display: flex; flex-wrap: wrap; gap: 10px; }
 
 .kids { display: flex; flex-wrap: wrap; gap: 10px; }
 .kid {

@@ -21,7 +21,6 @@
   background: var(--color-blue-tint);
   color: var(--color-blue-ink);
 }
-.badgeAccepted { background: var(--color-green-tint); color: var(--color-green-ink); }
 .program { font-family: var(--font-display); font-size: 22px; font-weight: 700; }
 .when { font-size: 15px; color: var(--color-ink-soft); }
 .place { font-size: 14px; color: var(--color-ink-muted); }

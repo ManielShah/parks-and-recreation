@@ -85,40 +85,26 @@ async function openSpots(c: Db, s: SectionRow, now: Date): Promise<number> {
 }
 
 /**
- * Give every open spot to the head of the waitlist, one family at a time. Families who opted in
- * are registered and charged on the spot; everyone else gets a 2-hour offer. Caller holds the section lock.
+ * Offer every open spot to the head of the waitlist, one family at a time, for 2 hours.
+ * Nothing is charged here: a family is charged only if they accept. Caller holds the section lock.
  */
 async function promoteWaitlist(c: Db, s: SectionRow, now: Date): Promise<void> {
   while ((await openSpots(c, s, now)) > 0) {
-    const { rows } = await c.query<{ family_id: string; child_id: string | null; auto_register: boolean }>(
+    const { rows } = await c.query<{ family_id: string; child_id: string | null }>(
       `DELETE FROM waitlist_entries
         WHERE id = (SELECT id FROM waitlist_entries WHERE section_id = $1 ORDER BY id LIMIT 1)
-        RETURNING family_id, child_id, auto_register`,
+        RETURNING family_id, child_id`,
       [s.id],
     );
     const next = rows[0];
     if (!next) return;
-    if (next.auto_register) {
-      // Payment is simulated: a real charge against the saved card goes here.
-      const { rows: reg } = await c.query<{ confirmation: string }>(
-        `INSERT INTO registrations (section_id, family_id, child_id, confirmation, price_cents, auto_registered, created_at)
-         VALUES ($1, $2, $3, 'CV-' || nextval('confirmation_seq'), $4, true, $5) RETURNING confirmation`,
-        [s.id, next.family_id, next.child_id, s.price_cents, now],
-      );
-      await notify(
-        c, next.family_id, 'good',
-        `A spot opened in ${s.label}. As you chose, ${await childName(c, next.child_id)} was registered automatically and your saved card was charged ${dollars(s.price_cents)}. Confirmation ${reg[0]!.confirmation}.`,
-        true,
-      );
-      continue;
-    }
     await c.query(
       `INSERT INTO holds (section_id, family_id, child_id, kind, expires_at) VALUES ($1, $2, $3, 'offer', $4)`,
       [s.id, next.family_id, next.child_id, new Date(now.getTime() + OFFER_MS)],
     );
     await notify(
       c, next.family_id, 'good',
-      `Text and email sent: a spot opened for ${await childName(c, next.child_id)} in ${s.label}. You have 2 hours to accept it.`,
+      `Text and email sent: a spot opened for ${await childName(c, next.child_id)} in ${s.label}. You have 2 hours to accept it. Your card is charged ${dollars(s.price_cents)} only if you accept.`,
       true,
     );
   }
@@ -174,14 +160,11 @@ async function assertChildFree(c: Db, childId: string, programId: string, now: D
   if (rows[0]) throw new BookingError('already_involved', `This child is already ${rows[0].state} in this program.`);
 }
 
-function toHold(r: { id: string; section_id: string; kind: 'cart' | 'offer'; child_id: string | null; accepted: boolean; expires_at: Date }): Hold {
-  return {
-    id: String(r.id), sectionId: r.section_id, mine: true, kind: r.kind,
-    childId: r.child_id, accepted: r.accepted, expiresAt: r.expires_at.getTime(),
-  };
+function toHold(r: { id: string; section_id: string; kind: 'cart' | 'offer'; child_id: string | null; expires_at: Date }): Hold {
+  return { id: String(r.id), sectionId: r.section_id, kind: r.kind, childId: r.child_id, expiresAt: r.expires_at.getTime() };
 }
 
-const HOLD_COLUMNS = 'id, section_id, kind, child_id, accepted, expires_at';
+const HOLD_COLUMNS = 'id, section_id, kind, child_id, expires_at';
 
 export async function addToCart(familyId: string, sectionId: string, childId: string, now: Date): Promise<{ hold: Hold; lastSpot: boolean }> {
   return tx(async (c) => {
@@ -221,9 +204,7 @@ export async function removeFromCart(familyId: string, holdId: string, now: Date
   });
 }
 
-export async function joinWaitlist(
-  familyId: string, sectionId: string, childId: string, autoRegister: boolean, now: Date,
-): Promise<WaitlistEntry> {
+export async function joinWaitlist(familyId: string, sectionId: string, childId: string, now: Date): Promise<WaitlistEntry> {
   return tx(async (c) => {
     const child = await lockChild(c, familyId, childId);
     const s = await lockSection(c, sectionId);
@@ -239,14 +220,14 @@ export async function joinWaitlist(
     }
 
     const { rows } = await c.query<{ id: string }>(
-      'INSERT INTO waitlist_entries (section_id, family_id, child_id, auto_register) VALUES ($1, $2, $3, $4) RETURNING id',
-      [s.id, familyId, child.id, autoRegister],
+      'INSERT INTO waitlist_entries (section_id, family_id, child_id) VALUES ($1, $2, $3) RETURNING id',
+      [s.id, familyId, child.id],
     );
     const { rows: pos } = await c.query<{ n: string }>(
       'SELECT count(*) AS n FROM waitlist_entries WHERE section_id = $1 AND id <= $2',
       [s.id, rows[0]!.id],
     );
-    return { id: String(rows[0]!.id), sectionId: s.id, childId: child.id, position: Number(pos[0]!.n), autoRegister };
+    return { id: String(rows[0]!.id), sectionId: s.id, childId: child.id, position: Number(pos[0]!.n) };
   });
 }
 
@@ -254,14 +235,6 @@ export async function leaveWaitlist(familyId: string, entryId: string): Promise<
   await tx(async (c) => {
     await lockSection(c, await sectionIdOf(c, 'waitlist_entries', entryId, familyId));
     await c.query('DELETE FROM waitlist_entries WHERE id = $1 AND family_id = $2', [entryId, familyId]);
-  });
-}
-
-/** Switch a waitlist entry between "notify me first" and "register and charge automatically". */
-export async function setWaitlistMode(familyId: string, entryId: string, autoRegister: boolean): Promise<void> {
-  await tx(async (c) => {
-    await lockSection(c, await sectionIdOf(c, 'waitlist_entries', entryId, familyId));
-    await c.query('UPDATE waitlist_entries SET auto_register = $3 WHERE id = $1 AND family_id = $2', [entryId, familyId, autoRegister]);
   });
 }
 
@@ -296,22 +269,35 @@ export async function sendOpeningReminders(now: Date): Promise<number> {
   });
 }
 
-/** Accepting turns the offer into a normal 5-minute cart hold. Nothing is charged until checkout. */
-export async function acceptOffer(familyId: string, holdId: string, now: Date): Promise<Hold> {
+/**
+ * Accepting a waitlist offer registers the child and charges the family's saved card in one step.
+ * This is the only point a waitlisted family is charged; an offer left to expire costs nothing.
+ */
+export async function acceptOffer(familyId: string, holdId: string, now: Date): Promise<{ registrations: Registration[]; totalCents: number }> {
   return tx(async (c) => {
     await lockFamily(c, familyId);
     const s = await lockSection(c, await sectionIdOf(c, 'holds', holdId, familyId));
-    const { rows } = await c.query(
-      `UPDATE holds SET kind = 'cart', accepted = true, expires_at = $3
-        WHERE id = $1 AND family_id = $2 AND kind = 'offer' AND expires_at > $4
-        RETURNING ${HOLD_COLUMNS}`,
-      [holdId, familyId, new Date(now.getTime() + HOLD_MS), now],
+    const { rows } = await c.query<{ child_id: string | null }>(
+      `DELETE FROM holds WHERE id = $1 AND family_id = $2 AND kind = 'offer' AND expires_at > $3 RETURNING child_id`,
+      [holdId, familyId, now],
     );
     if (!rows[0]) {
       await settleSection(c, s, now);
       throw new BookingError('expired', 'This offer has expired and went to the next family in line.');
     }
-    return toHold(rows[0]);
+    // Payment is simulated: charge the saved card here, and throw (rolling back) if it's declined.
+    const { rows: reg } = await c.query<{ id: string; confirmation: string }>(
+      `INSERT INTO registrations (section_id, family_id, child_id, confirmation, price_cents, from_waitlist, created_at)
+       VALUES ($1, $2, $3, 'CV-' || nextval('confirmation_seq'), $4, true, $5) RETURNING id, confirmation`,
+      [s.id, familyId, rows[0].child_id, s.price_cents, now],
+    );
+    return {
+      registrations: [{
+        id: String(reg[0]!.id), sectionId: s.id, childId: rows[0].child_id ?? '', confirmation: reg[0]!.confirmation,
+        priceCents: s.price_cents, fromWaitlist: true,
+      }],
+      totalCents: s.price_cents,
+    };
   });
 }
 
@@ -365,7 +351,7 @@ export async function checkout(familyId: string, holdIds: string[], now: Date): 
       const r = rows[0] as unknown as { id: string; confirmation: string };
       registrations.push({
         id: String(r.id), sectionId: s.id, childId: h.child_id ?? '', confirmation: r.confirmation, priceCents: s.price_cents,
-        autoRegistered: false,
+        fromWaitlist: false,
       });
       totalCents += s.price_cents;
     }

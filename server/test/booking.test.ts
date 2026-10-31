@@ -105,7 +105,7 @@ describe('concurrent booking requests', () => {
     const families = await makeFamilies(10);
     const now = clock.now();
     // swim2-sat is full with 2 already waiting.
-    const entries = await Promise.all(families.map((f) => booking.joinWaitlist(f.family, 'swim2-sat', f.child, false, now)));
+    const entries = await Promise.all(families.map((f) => booking.joinWaitlist(f.family, 'swim2-sat', f.child, now)));
     assert.deepEqual(entries.map((e) => e.position).sort((a, b) => a - b), [3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
   });
 });
@@ -130,13 +130,13 @@ describe('holds and waitlist timing', () => {
     const now = () => clock.now();
     // Fill art-sat and put both families in line.
     await pool.query(`INSERT INTO registrations (section_id, family_id, confirmation, price_cents) VALUES ('art-sat', 'community', 'X-1', 0)`);
-    await booking.joinWaitlist(a!.family, 'art-sat', a!.child, false, now());
-    await booking.joinWaitlist(b!.family, 'art-sat', b!.child, false, now());
+    await booking.joinWaitlist(a!.family, 'art-sat', a!.child, now());
+    await booking.joinWaitlist(b!.family, 'art-sat', b!.child, now());
 
     // Someone drops: A gets a 2-hour offer, B stays in line, and nobody else can take it.
     const dropAt = now();
     await booking.simulateDropout('art-sat', 'community', dropAt);
-    const offerA = (await getState(a!.family))!.sections.find((s) => s.sectionId === 'art-sat')!.holds.find((h) => h.mine)!;
+    const offerA = (await getState(a!.family))!.sections.find((s) => s.sectionId === 'art-sat')!.holds.find((h) => h.kind === 'offer')!;
     assert.equal(offerA.kind, 'offer');
     assert.equal(offerA.expiresAt - dropAt.getTime(), OFFER_MS);
     await assert.rejects(booking.addToCart(c!.family, 'art-sat', c!.child, now()), { code: 'section_full' });
@@ -145,37 +145,40 @@ describe('holds and waitlist timing', () => {
     clock.advance(OFFER_MS);
     await sweepOnce();
     const stateB = (await getState(b!.family))!;
-    assert.equal(stateB.sections.find((s) => s.sectionId === 'art-sat')!.holds.find((h) => h.mine)?.kind, 'offer');
+    assert.equal(stateB.sections.find((s) => s.sectionId === 'art-sat')!.holds.find((h) => h.kind === 'offer')?.kind, 'offer');
     assert.equal(stateB.waitlist.length, 0);
 
     // B declines and the line is empty: the spot is open to anyone.
-    const offerB = stateB.sections.find((s) => s.sectionId === 'art-sat')!.holds.find((h) => h.mine)!;
+    const offerB = stateB.sections.find((s) => s.sectionId === 'art-sat')!.holds.find((h) => h.kind === 'offer')!;
     await booking.declineOffer(b!.family, offerB.id, now());
     await booking.addToCart(c!.family, 'art-sat', c!.child, now());
   });
 
-  test('accepting an offer turns it into a 5-minute cart hold that checks out', async () => {
+  test('accepting an offer registers the child and charges in one step', async () => {
     const [a] = await makeFamilies(1);
-    await booking.joinWaitlist(a!.family, 'swim2-sat', a!.child, false, clock.now());
+    await booking.joinWaitlist(a!.family, 'swim2-sat', a!.child, clock.now());
     // Two community families are ahead, so the third dropout reaches family A.
     await booking.simulateDropout('swim2-sat', 'community', clock.now());
     await booking.simulateDropout('swim2-sat', 'community', clock.now());
     await booking.simulateDropout('swim2-sat', 'community', clock.now());
-    const offer = (await getState(a!.family))!.sections.find((s) => s.sectionId === 'swim2-sat')!.holds.find((h) => h.mine)!;
-    const hold = await booking.acceptOffer(a!.family, offer.id, clock.now());
-    assert.equal(hold.kind, 'cart');
-    assert.equal(hold.accepted, true);
-    const order = await booking.checkout(a!.family, [hold.id], clock.now());
+    const offer = (await getState(a!.family))!.sections.find((s) => s.sectionId === 'swim2-sat')!.holds.find((h) => h.kind === 'offer')!;
+    const order = await booking.acceptOffer(a!.family, offer.id, clock.now());
     assert.equal(order.registrations.length, 1);
+    assert.equal(order.totalCents, 8500);
+    assert.equal(order.registrations[0]!.fromWaitlist, true);
     assert.match(order.registrations[0]!.confirmation, /^CV-\d+$/);
+    // Straight to registered: nothing left in the cart or on offer.
+    const state = (await getState(a!.family))!;
+    assert.equal(state.sections.find((s) => s.sectionId === 'swim2-sat')!.holds.length, 0);
+    assert.equal(state.registrations.length, 1);
   });
 
   test('an offer cannot be accepted after it expires', async () => {
     const [a] = await makeFamilies(1);
     await pool.query(`INSERT INTO registrations (section_id, family_id, confirmation, price_cents) VALUES ('art-sat', 'community', 'X-1', 0)`);
-    await booking.joinWaitlist(a!.family, 'art-sat', a!.child, false, clock.now());
+    await booking.joinWaitlist(a!.family, 'art-sat', a!.child, clock.now());
     await booking.simulateDropout('art-sat', 'community', clock.now());
-    const offer = (await getState(a!.family))!.sections.find((s) => s.sectionId === 'art-sat')!.holds.find((h) => h.mine)!;
+    const offer = (await getState(a!.family))!.sections.find((s) => s.sectionId === 'art-sat')!.holds.find((h) => h.kind === 'offer')!;
     clock.advance(OFFER_MS + 1);
     await assert.rejects(booking.acceptOffer(a!.family, offer.id, clock.now()), { code: 'expired' });
   });
@@ -188,28 +191,26 @@ describe('holds and waitlist timing', () => {
   });
 });
 
-describe('waitlist auto-registration', () => {
-  test('an opted-in family is registered the moment a spot opens, with no offer', async () => {
-    const [a] = await makeFamilies(1);
+describe('charging waitlisted families', () => {
+  test('nobody on the waitlist is registered or charged without accepting, even as offers lapse', async () => {
+    const families = await makeFamilies(3);
     await pool.query(`INSERT INTO registrations (section_id, family_id, confirmation, price_cents) VALUES ('art-sat', 'community', 'X-1', 0)`);
-    await booking.joinWaitlist(a!.family, 'art-sat', a!.child, true, clock.now());
+    for (const f of families) await booking.joinWaitlist(f.family, 'art-sat', f.child, clock.now());
     await booking.simulateDropout('art-sat', 'community', clock.now());
 
-    const state = (await getState(a!.family))!;
-    assert.equal(state.waitlist.length, 0);
-    assert.equal(state.sections.find((s) => s.sectionId === 'art-sat')!.holds.length, 0);
-    assert.equal(state.registrations.length, 1);
-    assert.equal(state.registrations[0]!.autoRegistered, true);
-    assert.match(state.notices.at(-1)!.message, /registered automatically/);
-  });
-
-  test('switching to auto-register before a spot opens takes effect', async () => {
-    const [a] = await makeFamilies(1);
-    await pool.query(`INSERT INTO registrations (section_id, family_id, confirmation, price_cents) VALUES ('art-sat', 'community', 'X-1', 0)`);
-    const entry = await booking.joinWaitlist(a!.family, 'art-sat', a!.child, false, clock.now());
-    await booking.setWaitlistMode(a!.family, entry.id, true);
-    await booking.simulateDropout('art-sat', 'community', clock.now());
-    assert.equal((await getState(a!.family))!.registrations[0]?.autoRegistered, true);
+    // Each family in turn gets the offer and lets it lapse.
+    for (const f of families) {
+      const offers = (await getState(f.family))!.sections.find((s) => s.sectionId === 'art-sat')!.holds;
+      assert.equal(offers.length, 1);
+      assert.equal(offers[0]!.kind, 'offer');
+      clock.advance(OFFER_MS);
+      await sweepOnce();
+    }
+    const { rows } = await pool.query(
+      `SELECT count(*)::int AS n FROM registrations WHERE family_id = ANY($1) AND withdrawn_at IS NULL`,
+      [families.map((f) => f.family)],
+    );
+    assert.equal(rows[0].n, 0);
   });
 });
 
@@ -231,12 +232,25 @@ describe('registration opening times', () => {
 });
 
 describe('HTTP API', () => {
-  test('state hides who holds other families’ spots', async () => {
+  test('another family’s hold shows only as a taken spot, with no timer', async () => {
     const app = createApp();
     const res = await request(app).get('/api/state').set('x-family-id', 'demo').expect(200);
+    // swim2-thu: 5 registered plus another family's cart hold, out of 6.
     const thu = res.body.sections.find((s: { sectionId: string }) => s.sectionId === 'swim2-thu');
-    assert.equal(thu.holds.length, 1);
-    assert.deepEqual({ mine: thu.holds[0].mine, id: thu.holds[0].id, childId: thu.holds[0].childId }, { mine: false, id: '', childId: null });
+    assert.deepEqual(thu.holds, []);
+    assert.equal(thu.taken, 6);
+    assert.ok(!JSON.stringify(res.body).includes('expiresAt'), 'no hold timers for a family with no holds');
+  });
+
+  test('accepting an offer over HTTP returns the paid registration', async () => {
+    const app = createApp();
+    await pool.query(`INSERT INTO registrations (section_id, family_id, confirmation, price_cents) VALUES ('art-sat', 'community', 'X-1', 0)`);
+    await request(app).post('/api/waitlist').send({ sectionId: 'art-sat', childId: 'maya' }).expect(201);
+    await booking.simulateDropout('art-sat', 'community', clock.now());
+    const state = await request(app).get('/api/state').expect(200);
+    const offer = state.body.sections.find((s: { sectionId: string }) => s.sectionId === 'art-sat').holds[0];
+    const res = await request(app).post(`/api/offers/${offer.id}/accept`).expect(201);
+    assert.equal(res.body.totalCents, 9500);
   });
 
   test('add to cart, then the error shape for a full section', async () => {

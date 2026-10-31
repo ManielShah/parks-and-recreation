@@ -43,16 +43,15 @@ export interface Program {
 
 export type HoldKind = 'cart' | 'offer';
 
-/** A spot temporarily reserved: in a cart (5 min) or offered from the waitlist (2 h). */
+/**
+ * One of this family's temporarily reserved spots: in its cart (5 min) or offered to it from the
+ * waitlist (2 h). Other families' holds are never sent; they count toward `SectionLive.taken`.
+ */
 export interface Hold {
   id: string;
   sectionId: string;
-  /** False for other families' holds; their ids and children are never exposed. */
-  mine: boolean;
   kind: HoldKind;
   childId: string | null;
-  /** The cart hold came from an accepted waitlist offer. */
-  accepted: boolean;
   expiresAt: number;
 }
 
@@ -62,8 +61,8 @@ export interface Registration {
   childId: string;
   confirmation: string;
   priceCents: number;
-  /** Registered straight from the waitlist and charged without a checkout. */
-  autoRegistered: boolean;
+  /** Came from an accepted waitlist offer, charged when the family accepted. */
+  fromWaitlist: boolean;
 }
 
 export interface WaitlistEntry {
@@ -72,15 +71,14 @@ export interface WaitlistEntry {
   childId: string;
   /** 1-based place in line. */
   position: number;
-  /** When a spot opens: register and charge right away instead of offering it for 2 hours. */
-  autoRegister: boolean;
 }
 
 export interface SectionLive {
   sectionId: string;
   capacity: number;
-  /** Active registrations, every family included. */
-  enrolled: number;
+  /** Spots unavailable to this family: every active registration plus other families' holds. */
+  taken: number;
+  /** This family's own holds in the section. */
   holds: Hold[];
   waitlistLength: number;
 }

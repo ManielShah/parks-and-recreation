@@ -28,9 +28,9 @@ Every taken spot is either an active `registrations` row or an unexpired `holds`
 
 Settling runs before every change to a section, and a background sweeper runs it every second (`SWEEP_INTERVAL_MS`). So a freed spot always goes to the waitlist before anyone else can cart it. The sweeper uses `SKIP LOCKED`, so several API servers can run it safely at the same time.
 
-Accepting an offer turns it into a normal 5-minute cart hold. Nobody is charged until they check out.
+**Charging waitlisted families.** A waitlisted family is charged only when they accept their offer, and only within its 2 hours. Accepting registers the child and charges the saved card in one step (`acceptOffer`, `registrations.from_waitlist`); there's no separate checkout. An offer that's declined or left to expire costs nothing and passes to the next family. There is no auto-charge mode.
 
-**Auto-register.** When joining a waitlist, a family can choose "Register and charge me automatically" (`waitlist_entries.auto_register`). They can switch modes from My registrations until a spot opens. When an opted-in family reaches the front of the line and a spot opens, they skip the offer. They're registered on the spot (`registrations.auto_registered`), charged, and sent a text and email.
+**Privacy between families.** Families never see that another family has a spot in their cart or on offer, or how long they have left. The API folds other families' holds into each section's `taken` count and only sends a family its own holds.
 
 **Opening reminders.** "Notify me when it opens" stores a row in `registration_reminders`. The sweeper sends the text and email once the program's `registration_opens_at` passes.
 
@@ -77,7 +77,7 @@ With `ENABLE_DEV_TOOLS=true`, the API exposes `/api/dev/*` and the site shows th
 ## Not built yet
 
 - **Sign-in.** The API identifies the family from an `X-Family-Id` header and defaults to the seeded demo family. See `familyOf` in `server/src/app.ts`.
-- **Payments.** Checkout and auto-registration register spots without charging a card. See `checkout` and `promoteWaitlist` in `server/src/booking.ts`.
+- **Payments.** Checkout and accepting a waitlist offer register spots without charging a card. See `checkout` and `acceptOffer` in `server/src/booking.ts`.
 - **Cancellation and refund policy.** The design shows "[TO BE CONFIRMED]" in the footer and at checkout until the policy is decided.
 - **Text and email delivery.** Notices are queued in `notifications`. `server/src/outbox.ts` logs them and marks them delivered; connect a provider there.
 - **Live updates.** The client polls `/api/state` every 2 seconds. Server-sent events would make updates faster.

@@ -25,8 +25,8 @@ export async function getCatalog(): Promise<CatalogResponse> {
 }
 
 /**
- * Everything one family's screen needs, read in a single snapshot. Other families' holds are
- * included so the family sees spots in carts, but without who holds them.
+ * Everything one family's screen needs, read in a single snapshot. Other families' cart holds and
+ * waitlist offers are folded into `taken`: nobody sees that another family is eyeing a spot, or for how long.
  */
 export async function getState(familyId: string): Promise<StateResponse | null> {
   const now = clock.now();
@@ -36,24 +36,31 @@ export async function getState(familyId: string): Promise<StateResponse | null> 
     const { rows: fam } = await c.query('SELECT id, name FROM families WHERE id = $1', [familyId]);
     if (!fam[0]) return null;
 
-    const [kids, sections, enrolled, holds, waitlist, regs, waits, notices, reminders] = await Promise.all([
+    const [kids, sections, taken, holds, waitlist, regs, waits, notices, reminders] = await Promise.all([
       c.query('SELECT id, name, age FROM children WHERE family_id = $1 ORDER BY age, name', [familyId]),
       c.query('SELECT id, capacity FROM sections ORDER BY id'),
-      c.query(`SELECT section_id, count(*)::int AS n FROM registrations WHERE withdrawn_at IS NULL GROUP BY section_id`),
       c.query(
-        `SELECT id, section_id, family_id = $1 AS mine, kind, child_id, accepted, expires_at
-           FROM holds WHERE expires_at > $2 ORDER BY id`,
+        `SELECT section_id, count(*)::int AS n FROM (
+           SELECT section_id FROM registrations WHERE withdrawn_at IS NULL
+           UNION ALL
+           SELECT section_id FROM holds WHERE family_id <> $1 AND expires_at > $2) t
+          GROUP BY section_id`,
+        [familyId, now],
+      ),
+      c.query(
+        `SELECT id, section_id, kind, child_id, expires_at FROM holds
+          WHERE family_id = $1 AND expires_at > $2 ORDER BY id`,
         [familyId, now],
       ),
       c.query('SELECT section_id, count(*)::int AS n FROM waitlist_entries GROUP BY section_id'),
       c.query(
-        `SELECT id, section_id, child_id, confirmation, price_cents, auto_registered FROM registrations
+        `SELECT id, section_id, child_id, confirmation, price_cents, from_waitlist FROM registrations
           WHERE family_id = $1 AND withdrawn_at IS NULL ORDER BY id`,
         [familyId],
       ),
       c.query(
-        `SELECT id, section_id, child_id, position, auto_register FROM (
-           SELECT id, section_id, family_id, child_id, auto_register, row_number() OVER (PARTITION BY section_id ORDER BY id)::int AS position
+        `SELECT id, section_id, child_id, position FROM (
+           SELECT id, section_id, family_id, child_id, row_number() OVER (PARTITION BY section_id ORDER BY id)::int AS position
              FROM waitlist_entries) w
           WHERE family_id = $1 ORDER BY id`,
         [familyId],
@@ -74,25 +81,17 @@ export async function getState(familyId: string): Promise<StateResponse | null> 
       sections: sections.rows.map((s) => ({
         sectionId: s.id,
         capacity: s.capacity,
-        enrolled: count(enrolled.rows, s.id),
+        taken: count(taken.rows, s.id),
         waitlistLength: count(waitlist.rows, s.id),
         holds: holds.rows
           .filter((h) => h.section_id === s.id)
-          .map((h) => ({
-            id: h.mine ? String(h.id) : '',
-            sectionId: h.section_id,
-            mine: h.mine,
-            kind: h.kind,
-            childId: h.mine ? h.child_id : null,
-            accepted: h.mine ? h.accepted : false,
-            expiresAt: h.expires_at.getTime(),
-          })),
+          .map((h) => ({ id: String(h.id), sectionId: h.section_id, kind: h.kind, childId: h.child_id, expiresAt: h.expires_at.getTime() })),
       })),
       registrations: regs.rows.map((r) => ({
         id: String(r.id), sectionId: r.section_id, childId: r.child_id, confirmation: r.confirmation, priceCents: r.price_cents,
-        autoRegistered: r.auto_registered,
+        fromWaitlist: r.from_waitlist,
       })),
-      waitlist: waits.rows.map((w) => ({ id: String(w.id), sectionId: w.section_id, childId: w.child_id, position: w.position, autoRegister: w.auto_register })),
+      waitlist: waits.rows.map((w) => ({ id: String(w.id), sectionId: w.section_id, childId: w.child_id, position: w.position })),
       notices: notices.rows.map((n) => ({ id: String(n.id), tone: n.tone, message: n.message, createdAt: n.created_at.getTime() })),
       reminders: reminders.rows.map((r) => r.program_id),
       dev: { enabled: config.devTools, clockOffsetMs: clock.offsetMs() },

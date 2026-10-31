@@ -1,5 +1,5 @@
 import type {
-  AddToCartResponse, ApiError, CatalogResponse, CheckoutResponse, ErrorCode, Hold, JoinWaitlistResponse, StateResponse,
+  AddToCartResponse, ApiError, CatalogResponse, CheckoutResponse, ErrorCode, JoinWaitlistResponse, StateResponse,
 } from '@parks/shared';
 
 export class ApiRequestError extends Error {
@@ -30,12 +30,10 @@ export const api = {
   addToCart: (sectionId: string, childId: string) => call<AddToCartResponse>('POST', '/cart', { sectionId, childId }),
   removeFromCart: (holdId: string) => call<void>('DELETE', `/cart/${holdId}`),
   checkout: (holdIds: string[]) => call<CheckoutResponse>('POST', '/checkout', { holdIds }),
-  joinWaitlist: (sectionId: string, childId: string, autoRegister: boolean) =>
-    call<JoinWaitlistResponse>('POST', '/waitlist', { sectionId, childId, autoRegister }),
-  setWaitlistMode: (entryId: string, autoRegister: boolean) => call<void>('PATCH', `/waitlist/${entryId}`, { autoRegister }),
+  joinWaitlist: (sectionId: string, childId: string) => call<JoinWaitlistResponse>('POST', '/waitlist', { sectionId, childId }),
   setReminder: (programId: string, on: boolean) => call<void>(on ? 'PUT' : 'DELETE', `/programs/${programId}/reminder`),
   leaveWaitlist: (entryId: string) => call<void>('DELETE', `/waitlist/${entryId}`),
-  acceptOffer: (holdId: string) => call<{ hold: Hold }>('POST', `/offers/${holdId}/accept`),
+  acceptOffer: (holdId: string) => call<CheckoutResponse>('POST', `/offers/${holdId}/accept`),
   declineOffer: (holdId: string) => call<void>('POST', `/offers/${holdId}/decline`),
   withdraw: (registrationId: string) => call<void>('POST', `/registrations/${registrationId}/withdraw`),
   dev: {

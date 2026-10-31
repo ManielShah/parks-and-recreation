@@ -47,9 +47,7 @@ export function Checkout({ model }: { model: Model }) {
                 <Card key={hold.id} className={hot ? styles.itemHot : undefined}>
                   <div className={styles.itemTop}>
                     <div className={styles.itemInfo}>
-                      <span className={`${styles.badge} ${hold.accepted ? styles.badgeAccepted : ''}`}>
-                        {hold.accepted ? 'Accepted waitlist spot' : 'Held for you'}
-                      </span>
+                      <span className={styles.badge}>Held for you</span>
                       <span className={styles.program}>{program.name}</span>
                       <span className={styles.when}>{section.day}, {section.time}</span>
                       <span className={styles.place}>{program.location}</span>
