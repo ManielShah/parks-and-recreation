@@ -14,6 +14,8 @@ Families browse winter programs, hold spots in a cart, check out, and join waitl
 | Spots one family can hold at once | 3 (`CART_MAX`) |
 | A waitlist offer stays open for | 2 hours (`OFFER_MS`) |
 | Sections per program a child can be in | 1 (registered, held or waitlisted) |
+| Class size | Set per program (`sections.capacity`), with the reason in `programs.capacity_note` |
+| Registration opens | `programs.registration_opens_at`; nothing can be carted or waitlisted before it |
 
 Every taken spot is either an active `registrations` row or an unexpired `holds` row. A hold is either a cart hold or a waitlist offer.
 
@@ -27,6 +29,10 @@ Every taken spot is either an active `registrations` row or an unexpired `holds`
 Settling runs before every change to a section, and a background sweeper runs it every second (`SWEEP_INTERVAL_MS`). So a freed spot always goes to the waitlist before anyone else can cart it. The sweeper uses `SKIP LOCKED`, so several API servers can run it safely at the same time.
 
 Accepting an offer turns it into a normal 5-minute cart hold. Nobody is charged until they check out.
+
+**Auto-register.** When joining a waitlist, a family can choose "Register and charge me automatically" (`waitlist_entries.auto_register`). They can switch modes from My registrations until a spot opens. When an opted-in family reaches the front of the line and a spot opens, they skip the offer. They're registered on the spot (`registrations.auto_registered`), charged, and sent a text and email.
+
+**Opening reminders.** "Notify me when it opens" stores a row in `registration_reminders`. The sweeper sends the text and email once the program's `registration_opens_at` passes.
 
 `server/test/booking.test.ts` covers these rules against a real Postgres. It includes 25 families racing for the last spot, mixed adds, removes and checkouts on one section, the cart limit under parallel requests, and offers passing down the waitlist as they expire.
 
@@ -71,6 +77,8 @@ With `ENABLE_DEV_TOOLS=true`, the API exposes `/api/dev/*` and the site shows th
 ## Not built yet
 
 - **Sign-in.** The API identifies the family from an `X-Family-Id` header and defaults to the seeded demo family. See `familyOf` in `server/src/app.ts`.
-- **Payments.** Checkout registers the held spots without charging a card. See `checkout` in `server/src/booking.ts`.
+- **Payments.** Checkout and auto-registration register spots without charging a card. See `checkout` and `promoteWaitlist` in `server/src/booking.ts`.
+- **Cancellation and refund policy.** The design shows "[TO BE CONFIRMED]" in the footer and at checkout until the policy is decided.
 - **Text and email delivery.** Notices are queued in `notifications`. `server/src/outbox.ts` logs them and marks them delivered; connect a provider there.
 - **Live updates.** The client polls `/api/state` every 2 seconds. Server-sent events would make updates faster.
+- **Several notices at once.** If more than one notice arrives in the same refresh, only the newest shows as a toast.

@@ -27,14 +27,36 @@ export function useActions() {
       showToast({ text: `Removed from your cart. The spot in ${name(sectionId)} was released.`, tone: 'info' });
     },
 
-    async joinWaitlist(sectionId: string, childId: string) {
-      const res = await run(() => api.joinWaitlist(sectionId, childId));
+    async joinWaitlist(sectionId: string, childId: string, autoRegister: boolean) {
+      const res = await run(() => api.joinWaitlist(sectionId, childId, autoRegister));
       if (!res) return false;
       showToast({
-        text: `${kid(childId)} is #${res.entry.position} on the waitlist for ${name(sectionId)}. If a spot opens, we’ll text and email you, and you’ll have 2 hours to accept it.`,
+        text: `${kid(childId)} is #${res.entry.position} on the waitlist for ${name(sectionId)}. ` +
+          (autoRegister
+            ? `If a spot opens, we’ll register ${kid(childId)} and charge your saved card automatically.`
+            : 'If a spot opens, we’ll text and email you, and you’ll have 2 hours to accept it.'),
         tone: 'info',
       });
       return true;
+    },
+
+    async setWaitlistMode(entryId: string, sectionId: string, childId: string, autoRegister: boolean) {
+      if ((await run(() => api.setWaitlistMode(entryId, autoRegister))) === null) return;
+      showToast({
+        text: autoRegister
+          ? `${kid(childId)} will be registered and charged automatically if a spot opens in ${name(sectionId)}.`
+          : `We’ll notify you first if a spot opens in ${name(sectionId)}. You’ll have 2 hours to accept.`,
+        tone: 'info',
+      });
+    },
+
+    async setReminder(programId: string, on: boolean) {
+      if ((await run(() => api.setReminder(programId, on))) === null) return;
+      const program = model?.program(programId)?.name ?? 'this program';
+      showToast({
+        text: on ? `We’ll text and email you when registration for ${program} opens.` : `Reminder turned off for ${program}.`,
+        tone: 'info',
+      });
     },
 
     async leaveWaitlist(entryId: string, sectionId: string, childId: string) {
@@ -56,7 +78,10 @@ export function useActions() {
 
     async withdraw(registrationId: string, sectionId: string, childId: string) {
       if ((await run(() => api.withdraw(registrationId))) === null) return;
-      showToast({ text: `${kid(childId)} was withdrawn from ${name(sectionId)}. A refund is on its way.`, tone: 'info' });
+      showToast({
+        text: `${kid(childId)} was withdrawn from ${name(sectionId)}. Any refund follows the cancellation policy, which is still being decided.`,
+        tone: 'info',
+      });
     },
 
     async checkout() {

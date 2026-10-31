@@ -5,7 +5,7 @@ export function Footer() {
     <footer className={styles.footer}>
       <div className={styles.inner}>
         <span>Cedar Valley Parks &amp; Recreation · Questions? Call (555) 010-4400</span>
-        <span>Refunds available until the first class.</span>
+        <span>Cancellation and refund policy: [TO BE CONFIRMED]</span>
       </div>
     </footer>
   );

@@ -46,6 +46,12 @@ export const CardIcon = ({ size = 22 }: P) => (
   </svg>
 );
 
+export const CalendarIcon = ({ size = 22 }: P) => (
+  <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24" strokeWidth={2} {...stroke}>
+    <rect x="3" y="5" width="18" height="16" rx="2" /><path d="M16 3v4M8 3v4M3 10h18" />
+  </svg>
+);
+
 export const LogoMark = () => (
   <svg aria-hidden="true" width="36" height="36" viewBox="0 0 36 36" fill="none">
     <circle cx="18" cy="18" r="18" fill="var(--color-forest)" />

@@ -93,7 +93,7 @@ export function Checkout({ model }: { model: Model }) {
             <Button size="large" onClick={pay} disabled={paying}>
               {paying ? 'Processing…' : `Pay ${money(total)} and register`}
             </Button>
-            <span className={styles.fine}>Spots are confirmed when payment goes through. Payment is simulated for now.</span>
+            <span className={styles.fine}>Spots are confirmed when payment goes through. Cancellation and refund policy: [TO BE CONFIRMED]. Payment is simulated for now.</span>
           </Card>
         </div>
       )}

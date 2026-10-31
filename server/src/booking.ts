@@ -1,5 +1,5 @@
 import { CART_MAX, HOLD_MS, OFFER_MS, isAgeEligible, type ErrorCode, type Hold, type Registration, type Tone, type WaitlistEntry } from '@parks/shared';
-import { tx, type Db } from './db.js';
+import { pool, tx, type Db } from './db.js';
 
 export class BookingError extends Error {
   constructor(
@@ -22,11 +22,12 @@ interface SectionRow {
   max_age: number;
   price_cents: number;
   label: string;
+  registration_opens_at: Date | null;
 }
 
 async function lockSection(c: Db, sectionId: string): Promise<SectionRow> {
   const { rows } = await c.query<SectionRow>(
-    `SELECT s.id, s.capacity, s.program_id, p.min_age, p.max_age, p.price_cents,
+    `SELECT s.id, s.capacity, s.program_id, p.min_age, p.max_age, p.price_cents, p.registration_opens_at,
             p.name || ' · ' || s.day_label AS label
        FROM sections s JOIN programs p ON p.id = s.program_id
       WHERE s.id = $1
@@ -83,17 +84,34 @@ async function openSpots(c: Db, s: SectionRow, now: Date): Promise<number> {
   return s.capacity - Number(rows[0]!.taken);
 }
 
-/** Offer every open spot to the head of the waitlist, one family at a time. Caller holds the section lock. */
+/**
+ * Give every open spot to the head of the waitlist, one family at a time. Families who opted in
+ * are registered and charged on the spot; everyone else gets a 2-hour offer. Caller holds the section lock.
+ */
 async function promoteWaitlist(c: Db, s: SectionRow, now: Date): Promise<void> {
   while ((await openSpots(c, s, now)) > 0) {
-    const { rows } = await c.query<{ family_id: string; child_id: string | null }>(
+    const { rows } = await c.query<{ family_id: string; child_id: string | null; auto_register: boolean }>(
       `DELETE FROM waitlist_entries
         WHERE id = (SELECT id FROM waitlist_entries WHERE section_id = $1 ORDER BY id LIMIT 1)
-        RETURNING family_id, child_id`,
+        RETURNING family_id, child_id, auto_register`,
       [s.id],
     );
     const next = rows[0];
     if (!next) return;
+    if (next.auto_register) {
+      // Payment is simulated: a real charge against the saved card goes here.
+      const { rows: reg } = await c.query<{ confirmation: string }>(
+        `INSERT INTO registrations (section_id, family_id, child_id, confirmation, price_cents, auto_registered, created_at)
+         VALUES ($1, $2, $3, 'CV-' || nextval('confirmation_seq'), $4, true, $5) RETURNING confirmation`,
+        [s.id, next.family_id, next.child_id, s.price_cents, now],
+      );
+      await notify(
+        c, next.family_id, 'good',
+        `A spot opened in ${s.label}. As you chose, ${await childName(c, next.child_id)} was registered automatically and your saved card was charged ${dollars(s.price_cents)}. Confirmation ${reg[0]!.confirmation}.`,
+        true,
+      );
+      continue;
+    }
     await c.query(
       `INSERT INTO holds (section_id, family_id, child_id, kind, expires_at) VALUES ($1, $2, $3, 'offer', $4)`,
       [s.id, next.family_id, next.child_id, new Date(now.getTime() + OFFER_MS)],
@@ -129,6 +147,16 @@ async function settleSection(c: Db, s: SectionRow, now: Date): Promise<void> {
   await promoteWaitlist(c, s, now);
 }
 
+function dollars(cents: number): string {
+  return cents % 100 === 0 ? `$${cents / 100}` : `$${(cents / 100).toFixed(2)}`;
+}
+
+function assertOpen(s: SectionRow, now: Date): void {
+  if (s.registration_opens_at && now < s.registration_opens_at) {
+    throw new BookingError('not_open', 'Registration for this program has not opened yet.');
+  }
+}
+
 /** A child may be in only one section of a program, in any state. Caller holds the child lock. */
 async function assertChildFree(c: Db, childId: string, programId: string, now: Date): Promise<void> {
   const { rows } = await c.query<{ state: string }>(
@@ -161,6 +189,7 @@ export async function addToCart(familyId: string, sectionId: string, childId: st
     const child = await lockChild(c, familyId, childId);
     const s = await lockSection(c, sectionId);
     await settleSection(c, s, now);
+    assertOpen(s, now);
 
     if (!isAgeEligible(child.age, { minAge: s.min_age, maxAge: s.max_age })) {
       throw new BookingError('not_eligible', `${child.name} is outside this program's age range.`);
@@ -192,11 +221,14 @@ export async function removeFromCart(familyId: string, holdId: string, now: Date
   });
 }
 
-export async function joinWaitlist(familyId: string, sectionId: string, childId: string, now: Date): Promise<WaitlistEntry> {
+export async function joinWaitlist(
+  familyId: string, sectionId: string, childId: string, autoRegister: boolean, now: Date,
+): Promise<WaitlistEntry> {
   return tx(async (c) => {
     const child = await lockChild(c, familyId, childId);
     const s = await lockSection(c, sectionId);
     await settleSection(c, s, now);
+    assertOpen(s, now);
 
     if (!isAgeEligible(child.age, { minAge: s.min_age, maxAge: s.max_age })) {
       throw new BookingError('not_eligible', `${child.name} is outside this program's age range.`);
@@ -207,14 +239,14 @@ export async function joinWaitlist(familyId: string, sectionId: string, childId:
     }
 
     const { rows } = await c.query<{ id: string }>(
-      'INSERT INTO waitlist_entries (section_id, family_id, child_id) VALUES ($1, $2, $3) RETURNING id',
-      [s.id, familyId, child.id],
+      'INSERT INTO waitlist_entries (section_id, family_id, child_id, auto_register) VALUES ($1, $2, $3, $4) RETURNING id',
+      [s.id, familyId, child.id, autoRegister],
     );
     const { rows: pos } = await c.query<{ n: string }>(
       'SELECT count(*) AS n FROM waitlist_entries WHERE section_id = $1 AND id <= $2',
       [s.id, rows[0]!.id],
     );
-    return { id: String(rows[0]!.id), sectionId: s.id, childId: child.id, position: Number(pos[0]!.n) };
+    return { id: String(rows[0]!.id), sectionId: s.id, childId: child.id, position: Number(pos[0]!.n), autoRegister };
   });
 }
 
@@ -222,6 +254,45 @@ export async function leaveWaitlist(familyId: string, entryId: string): Promise<
   await tx(async (c) => {
     await lockSection(c, await sectionIdOf(c, 'waitlist_entries', entryId, familyId));
     await c.query('DELETE FROM waitlist_entries WHERE id = $1 AND family_id = $2', [entryId, familyId]);
+  });
+}
+
+/** Switch a waitlist entry between "notify me first" and "register and charge automatically". */
+export async function setWaitlistMode(familyId: string, entryId: string, autoRegister: boolean): Promise<void> {
+  await tx(async (c) => {
+    await lockSection(c, await sectionIdOf(c, 'waitlist_entries', entryId, familyId));
+    await c.query('UPDATE waitlist_entries SET auto_register = $3 WHERE id = $1 AND family_id = $2', [entryId, familyId, autoRegister]);
+  });
+}
+
+/** Ask to be texted and emailed when a program's registration opens. */
+export async function setReminder(familyId: string, programId: string, on: boolean): Promise<void> {
+  const { rowCount } = await pool.query('SELECT 1 FROM programs WHERE id = $1', [programId]);
+  if (!rowCount) throw new BookingError('not_found', 'That program does not exist.', 404);
+  if (on) {
+    await pool.query(
+      'INSERT INTO registration_reminders (family_id, program_id) VALUES ($1, $2) ON CONFLICT DO NOTHING',
+      [familyId, programId],
+    );
+  } else {
+    await pool.query('DELETE FROM registration_reminders WHERE family_id = $1 AND program_id = $2', [familyId, programId]);
+  }
+}
+
+/** Notify every family waiting on a program whose registration has now opened. */
+export async function sendOpeningReminders(now: Date): Promise<number> {
+  return tx(async (c) => {
+    const { rows } = await c.query<{ family_id: string; name: string }>(
+      `UPDATE registration_reminders r SET notified_at = $1
+         FROM programs p
+        WHERE p.id = r.program_id AND r.notified_at IS NULL AND p.registration_opens_at <= $1
+        RETURNING r.family_id, p.name`,
+      [now],
+    );
+    for (const r of rows) {
+      await notify(c, r.family_id, 'good', `Registration for ${r.name} is open now. We sent you a text and email.`, true);
+    }
+    return rows.length;
   });
 }
 
@@ -294,6 +365,7 @@ export async function checkout(familyId: string, holdIds: string[], now: Date): 
       const r = rows[0] as unknown as { id: string; confirmation: string };
       registrations.push({
         id: String(r.id), sectionId: s.id, childId: h.child_id ?? '', confirmation: r.confirmation, priceCents: s.price_cents,
+        autoRegistered: false,
       });
       totalCents += s.price_cents;
     }
@@ -317,7 +389,7 @@ export async function withdraw(familyId: string, registrationId: string, now: Da
 export async function sweepSection(sectionId: string, now: Date): Promise<void> {
   await tx(async (c) => {
     const { rows } = await c.query<SectionRow>(
-      `SELECT s.id, s.capacity, s.program_id, p.min_age, p.max_age, p.price_cents,
+      `SELECT s.id, s.capacity, s.program_id, p.min_age, p.max_age, p.price_cents, p.registration_opens_at,
               p.name || ' · ' || s.day_label AS label
          FROM sections s JOIN programs p ON p.id = s.program_id
         WHERE s.id = $1

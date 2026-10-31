@@ -55,7 +55,7 @@ describe('concurrent booking requests', () => {
   test('many families racing for the last spot: exactly one gets it', async () => {
     const families = await makeFamilies(25);
     const now = clock.now();
-    // art-sat is seeded with 4 of 5 spots taken.
+    // art-sat is seeded with 9 of 10 spots taken.
     const results = await Promise.allSettled(families.map((f) => booking.addToCart(f.family, 'art-sat', f.child, now)));
     const codes = results.map(codeOf);
     assert.equal(codes.filter((c) => c === 'ok').length, 1);
@@ -67,7 +67,7 @@ describe('concurrent booking requests', () => {
   test('a busy section never goes over capacity with mixed adds, removes and checkouts', async () => {
     const families = await makeFamilies(30);
     const now = clock.now();
-    // art-wed: 1 of 5 taken.
+    // art-wed: 3 of 10 taken.
     await Promise.allSettled(
       families.map(async (f, i) => {
         const { hold } = await booking.addToCart(f.family, 'art-wed', f.child, now);
@@ -78,7 +78,7 @@ describe('concurrent booking requests', () => {
     const t = await taken('art-wed', now);
     assert.ok(t.regs + t.holds <= t.capacity, `over capacity: ${JSON.stringify(t)}`);
     const { rows } = await pool.query(`SELECT count(*)::int AS n FROM registrations WHERE section_id = 'art-wed' AND family_id <> 'community'`);
-    assert.equal(rows[0].n, t.regs - 1);
+    assert.equal(rows[0].n, t.regs - 3);
   });
 
   test('one child cannot be booked into two sections of a program at once', async () => {
@@ -97,7 +97,7 @@ describe('concurrent booking requests', () => {
     for (const k of kids) await pool.query('INSERT INTO children (id, family_id, name, age) VALUES ($1, $2, $1, 7)', [k, f!.family]);
     const now = clock.now();
     const results = await Promise.allSettled(kids.map((k) => booking.addToCart(f!.family, 'art-wed', k, now)));
-    // art-wed has 4 open spots, so the cart limit is what stops the 4th and 5th.
+    // art-wed has 7 open spots, so the cart limit is what stops the 4th and 5th.
     assert.equal(results.map(codeOf).filter((c) => c === 'ok').length, 3);
   });
 
@@ -105,7 +105,7 @@ describe('concurrent booking requests', () => {
     const families = await makeFamilies(10);
     const now = clock.now();
     // swim2-sat is full with 2 already waiting.
-    const entries = await Promise.all(families.map((f) => booking.joinWaitlist(f.family, 'swim2-sat', f.child, now)));
+    const entries = await Promise.all(families.map((f) => booking.joinWaitlist(f.family, 'swim2-sat', f.child, false, now)));
     assert.deepEqual(entries.map((e) => e.position).sort((a, b) => a - b), [3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
   });
 });
@@ -130,8 +130,8 @@ describe('holds and waitlist timing', () => {
     const now = () => clock.now();
     // Fill art-sat and put both families in line.
     await pool.query(`INSERT INTO registrations (section_id, family_id, confirmation, price_cents) VALUES ('art-sat', 'community', 'X-1', 0)`);
-    await booking.joinWaitlist(a!.family, 'art-sat', a!.child, now());
-    await booking.joinWaitlist(b!.family, 'art-sat', b!.child, now());
+    await booking.joinWaitlist(a!.family, 'art-sat', a!.child, false, now());
+    await booking.joinWaitlist(b!.family, 'art-sat', b!.child, false, now());
 
     // Someone drops: A gets a 2-hour offer, B stays in line, and nobody else can take it.
     const dropAt = now();
@@ -156,8 +156,8 @@ describe('holds and waitlist timing', () => {
 
   test('accepting an offer turns it into a 5-minute cart hold that checks out', async () => {
     const [a] = await makeFamilies(1);
-    await booking.joinWaitlist(a!.family, 'swim2-sat', a!.child, clock.now());
-    // Two community families are ahead; two dropouts reach family A.
+    await booking.joinWaitlist(a!.family, 'swim2-sat', a!.child, false, clock.now());
+    // Two community families are ahead, so the third dropout reaches family A.
     await booking.simulateDropout('swim2-sat', 'community', clock.now());
     await booking.simulateDropout('swim2-sat', 'community', clock.now());
     await booking.simulateDropout('swim2-sat', 'community', clock.now());
@@ -173,7 +173,7 @@ describe('holds and waitlist timing', () => {
   test('an offer cannot be accepted after it expires', async () => {
     const [a] = await makeFamilies(1);
     await pool.query(`INSERT INTO registrations (section_id, family_id, confirmation, price_cents) VALUES ('art-sat', 'community', 'X-1', 0)`);
-    await booking.joinWaitlist(a!.family, 'art-sat', a!.child, clock.now());
+    await booking.joinWaitlist(a!.family, 'art-sat', a!.child, false, clock.now());
     await booking.simulateDropout('art-sat', 'community', clock.now());
     const offer = (await getState(a!.family))!.sections.find((s) => s.sectionId === 'art-sat')!.holds.find((h) => h.mine)!;
     clock.advance(OFFER_MS + 1);
@@ -185,6 +185,48 @@ describe('holds and waitlist timing', () => {
     const { hold } = await booking.addToCart(a!.family, 'art-wed', a!.child, clock.now());
     clock.advance(HOLD_MS);
     await assert.rejects(booking.checkout(a!.family, [hold.id], clock.now()), { code: 'expired' });
+  });
+});
+
+describe('waitlist auto-registration', () => {
+  test('an opted-in family is registered the moment a spot opens, with no offer', async () => {
+    const [a] = await makeFamilies(1);
+    await pool.query(`INSERT INTO registrations (section_id, family_id, confirmation, price_cents) VALUES ('art-sat', 'community', 'X-1', 0)`);
+    await booking.joinWaitlist(a!.family, 'art-sat', a!.child, true, clock.now());
+    await booking.simulateDropout('art-sat', 'community', clock.now());
+
+    const state = (await getState(a!.family))!;
+    assert.equal(state.waitlist.length, 0);
+    assert.equal(state.sections.find((s) => s.sectionId === 'art-sat')!.holds.length, 0);
+    assert.equal(state.registrations.length, 1);
+    assert.equal(state.registrations[0]!.autoRegistered, true);
+    assert.match(state.notices.at(-1)!.message, /registered automatically/);
+  });
+
+  test('switching to auto-register before a spot opens takes effect', async () => {
+    const [a] = await makeFamilies(1);
+    await pool.query(`INSERT INTO registrations (section_id, family_id, confirmation, price_cents) VALUES ('art-sat', 'community', 'X-1', 0)`);
+    const entry = await booking.joinWaitlist(a!.family, 'art-sat', a!.child, false, clock.now());
+    await booking.setWaitlistMode(a!.family, entry.id, true);
+    await booking.simulateDropout('art-sat', 'community', clock.now());
+    assert.equal((await getState(a!.family))!.registrations[0]?.autoRegistered, true);
+  });
+});
+
+describe('registration opening times', () => {
+  test('nobody can cart or waitlist before registration opens, and reminders go out when it does', async () => {
+    const [a] = await makeFamilies(1, 10);
+    // bball is seeded to open 3 minutes from now.
+    await assert.rejects(booking.addToCart(a!.family, 'bball-w1', a!.child, clock.now()), { code: 'not_open' });
+    await booking.setReminder(a!.family, 'bball', true);
+    assert.deepEqual((await getState(a!.family))!.reminders, ['bball']);
+
+    clock.advance(3 * 60 * 1000);
+    await sweepOnce();
+    const state = (await getState(a!.family))!;
+    assert.deepEqual(state.reminders, []);
+    assert.match(state.notices.at(-1)!.message, /Youth Basketball Camp is open now/);
+    await booking.addToCart(a!.family, 'bball-w1', a!.child, clock.now());
   });
 });
 

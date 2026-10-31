@@ -34,6 +34,10 @@ export interface Program {
   priceCents: number;
   dates: string;
   description: string;
+  /** Why the class size is what it is, e.g. supervision ratios or space. */
+  capacityNote: string | null;
+  /** When registration opens (epoch ms), or null if it's already open. */
+  registrationOpensAt: number | null;
   sections: Section[];
 }
 
@@ -58,6 +62,8 @@ export interface Registration {
   childId: string;
   confirmation: string;
   priceCents: number;
+  /** Registered straight from the waitlist and charged without a checkout. */
+  autoRegistered: boolean;
 }
 
 export interface WaitlistEntry {
@@ -66,6 +72,8 @@ export interface WaitlistEntry {
   childId: string;
   /** 1-based place in line. */
   position: number;
+  /** When a spot opens: register and charge right away instead of offering it for 2 hours. */
+  autoRegister: boolean;
 }
 
 export interface SectionLive {
@@ -94,6 +102,8 @@ export interface StateResponse {
   registrations: Registration[];
   waitlist: WaitlistEntry[];
   notices: Notice[];
+  /** Programs this family asked to be told about when registration opens. */
+  reminders: string[];
   dev: { enabled: boolean; clockOffsetMs: number };
 }
 
@@ -125,10 +135,20 @@ export type ErrorCode =
   | 'section_full'
   | 'spots_open'
   | 'expired'
-  | 'cart_changed';
+  | 'cart_changed'
+  | 'not_open';
 
 export interface ApiError {
   error: { code: ErrorCode; message: string };
+}
+
+export function isRegistrationOpen(program: Pick<Program, 'registrationOpensAt'>, now: number): boolean {
+  return program.registrationOpensAt === null || now >= program.registrationOpensAt;
+}
+
+/** Largest class across a program's sections, for "Up to N kids per class". */
+export function classSize(program: Pick<Program, 'sections'>): number {
+  return Math.max(0, ...program.sections.map((s) => s.capacity));
 }
 
 export function isAgeEligible(age: number, program: Pick<Program, 'minAge' | 'maxAge'>): boolean {

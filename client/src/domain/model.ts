@@ -1,5 +1,7 @@
-import { CART_MAX, isAgeEligible, type Hold, type Kid, type Program, type Section, type SectionLive, type StateResponse, type Tone } from '@parks/shared';
-import { countdown, plural } from './format';
+import { CART_MAX, isAgeEligible, isRegistrationOpen, type Hold, type Kid, type Program, type Section, type SectionLive, type StateResponse, type Tone } from '@parks/shared';
+import { countdown, plural, when } from './format';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Catalog and live state joined up, with `now` on the server's clock. */
 export interface Model {
@@ -73,7 +75,27 @@ export function firstEligible(m: Model, program: Program): string | null {
   return m.state.kids.find((k) => kidStatus(m, k, program).ok)?.id ?? null;
 }
 
-export function programAvailability(m: Model, program: Program): { label: string; tone: 'good' | 'warn' | 'muted' } {
+export type Opening =
+  | { open: true }
+  | { open: false; at: string; left: number; buttonLabel: string; cardLabel: string };
+
+/** Whether registration has opened yet, with the wording the design uses while it hasn't. */
+export function opening(m: Model, program: Program): Opening {
+  if (isRegistrationOpen(program, m.now)) return { open: true };
+  const left = program.registrationOpensAt! - m.now;
+  const soon = left < DAY_MS;
+  return {
+    open: false,
+    at: when(program.registrationOpensAt!),
+    left,
+    buttonLabel: soon ? `Opens in ${countdown(left)}` : 'Not open yet',
+    cardLabel: soon ? `Registration opens in ${countdown(left)}` : `Opens ${when(program.registrationOpensAt!)}`,
+  };
+}
+
+export function programAvailability(m: Model, program: Program): { label: string; tone: 'good' | 'warn' | 'info' | 'muted' } {
+  const o = opening(m, program);
+  if (!o.open) return { label: o.cardLabel, tone: 'info' };
   let open = 0;
   let held = 0;
   for (const s of program.sections) {
@@ -96,6 +118,7 @@ export type SectionAction =
   | { type: 'checkout'; label: string }
   | { type: 'leave'; label: string; entryId: string }
   | { type: 'account'; label: string }
+  | { type: 'cancelJoin'; label: string }
   | { type: 'disabled'; label: string };
 
 export interface SectionView {
@@ -108,11 +131,17 @@ export interface SectionView {
   tone: NoteTone;
   action: SectionAction;
   secondary: boolean;
+  /** Show the "how should we handle it" waitlist form under this row. */
+  showJoin: boolean;
 }
 
-/** What one section row says and offers, for the child currently picked. Mirrors the design's rules. */
-export function sectionView(m: Model, section: Section, kid: Kid | null, kidOk: boolean): SectionView {
+/**
+ * What one section row says and offers, for the child currently picked. Mirrors the design's rules.
+ * `joining` is true while the family is choosing a waitlist mode for this section.
+ */
+export function sectionView(m: Model, program: Program, section: Section, kid: Kid | null, kidOk: boolean, joining: boolean): SectionView {
   const l = m.live(section.id);
+  const opens = opening(m, program);
   const now = m.now;
   const mine = l.holds.filter((h) => h.mine && h.kind === 'cart');
   const myOffer = l.holds.find((h) => h.mine && h.kind === 'offer') ?? null;
@@ -140,39 +169,47 @@ export function sectionView(m: Model, section: Section, kid: Kid | null, kidOk: 
   const hh = household.join(' · ');
   const pre = hh ? `${hh} · ` : '';
   const needKid = !kid || !kidOk;
+  const showJoin = joining && !needKid;
 
   let note: string;
   let tone: NoteTone;
   let action: SectionAction;
   let secondary = false;
 
-  if (needKid && household.length) {
+  if (!opens.open) {
+    note = `Up to ${l.capacity} kids · registration opens ${opens.at}`;
+    tone = 'muted';
+    action = { type: 'disabled', label: opens.buttonLabel };
+  } else if (needKid && household.length) {
     note = hh;
     if (myOffer) { tone = 'good'; action = { type: 'accept', label: 'Accept spot', holdId: myOffer.id }; }
     else if (mine.length) { tone = 'info'; action = { type: 'checkout', label: 'Go to checkout' }; }
     else if (myWait && !myRegs.length) { tone = 'info'; secondary = true; action = { type: 'leave', label: 'Leave waitlist', entryId: myWait.id }; }
     else { tone = 'good'; secondary = true; action = { type: 'account', label: 'View registrations' }; }
   } else if (open > 0) {
-    const heldNote = others.length ? ` · ${others.length} in another family’s cart` : '';
+    const heldNote = others.length ? ` · ${others.length} held for another family` : '';
     note = pre + (open === 1 ? 'Only 1 spot left' : `${open} of ${l.capacity} spots open`) + heldNote;
     tone = open === 1 ? 'warn' : hh ? 'info' : 'muted';
     if (needKid) action = { type: 'disabled', label: 'Add to cart' };
     else if (cartFull) action = { type: 'disabled', label: 'Cart is full' };
     else action = { type: 'add', label: `Add ${kid!.name} to cart` };
-  } else if (others.length && l.enrolled < l.capacity) {
-    const soon = Math.min(...others.map((h) => h.expiresAt));
-    note = pre + (othersCart.length
-      ? (othersCart.length === 1
-          ? 'Someone has the last spot in their cart.'
-          : `The last ${othersCart.length} spots are in other families’ carts.`) +
-        ` If they don’t check out in ${countdown(soon - now)}, it goes to the waitlist.`
-      : `The open spot was offered to the next family on the waitlist. They have ${countdown(soon - now)} to accept.`);
-    tone = 'warn';
-    action = needKid ? { type: 'disabled', label: 'Join waitlist' } : { type: 'waitlist', label: `Waitlist ${kid!.name}` };
   } else {
-    note = `${pre}Full · ${l.waitlistLength} ${plural(l.waitlistLength, 'family', 'families')} on the waitlist`;
-    tone = hh ? 'info' : 'muted';
-    action = needKid ? { type: 'disabled', label: 'Join waitlist' } : { type: 'waitlist', label: `Waitlist ${kid!.name}` };
+    if (others.length && l.enrolled < l.capacity) {
+      const soon = Math.min(...others.map((h) => h.expiresAt));
+      note = pre + (othersCart.length
+        ? (othersCart.length === 1
+            ? 'Someone has the last spot in their cart.'
+            : `The last ${othersCart.length} spots are in other families’ carts.`) +
+          ` If they don’t check out in ${countdown(soon - now)}, it goes to the waitlist.`
+        : `The open spot was offered to the next family on the waitlist. They have ${countdown(soon - now)} to accept.`);
+      tone = 'warn';
+    } else {
+      note = `${pre}Full · ${l.waitlistLength} ${plural(l.waitlistLength, 'family', 'families')} on the waitlist`;
+      tone = hh ? 'info' : 'muted';
+    }
+    if (needKid) action = { type: 'disabled', label: 'Join waitlist' };
+    else if (showJoin) { action = { type: 'cancelJoin', label: 'Cancel' }; secondary = true; }
+    else action = { type: 'waitlist', label: `Waitlist ${kid!.name}` };
   }
 
   return {
@@ -180,10 +217,11 @@ export function sectionView(m: Model, section: Section, kid: Kid | null, kidOk: 
     day: section.day,
     time: section.time,
     dots,
-    capacityLabel: `${l.enrolled} taken, ${l.holds.length} in carts, ${Math.max(open, 0)} open, out of ${l.capacity} spots`,
+    capacityLabel: `${l.enrolled} taken, ${l.holds.length} on hold, ${Math.max(open, 0)} open, out of ${l.capacity} spots`,
     note,
     tone,
     action,
     secondary,
+    showJoin,
   };
 }

@@ -10,7 +10,6 @@ interface SeedSection {
   id: string;
   day: string;
   time: string;
-  capacity: number;
   enrolled: number;
   waitlist?: number;
 }
@@ -25,63 +24,75 @@ interface SeedProgram {
   price: number;
   dates: string;
   description: string;
+  /** Class size for every section of the program. */
+  capacity: number;
+  capacityNote: string;
+  /** Registration opens this long after seeding, or on the given day at 9 am. */
+  opensInMs?: number;
+  opensInDays?: number;
   sections: SeedSection[];
 }
 
-const CAP = 5;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const SEED_PROGRAMS: SeedProgram[] = [
   {
     id: 'tots', name: 'Tiny Tumblers', category: 'Gymnastics', minAge: 3, maxAge: 5,
+    capacity: 8, capacityNote: '2 coaches, 4 kids each',
     location: 'Central Rec Gym', price: 70, dates: 'Jan 9 – Feb 27',
     description: 'Rolls, balance beams and soft landings for preschoolers. A parent or caregiver stays on deck for the first two classes.',
     sections: [
-      { id: 'tots-fri', day: 'Fridays', time: '10:00–10:45 am', capacity: CAP, enrolled: 3 },
-      { id: 'tots-sat', day: 'Saturdays', time: '9:00–9:45 am', capacity: CAP, enrolled: 2 },
+      { id: 'tots-fri', day: 'Fridays', time: '10:00–10:45 am', enrolled: 5 },
+      { id: 'tots-sat', day: 'Saturdays', time: '9:00–9:45 am', enrolled: 4 },
     ],
   },
   {
     id: 'swim1', name: 'Swim Level 1', category: 'Aquatics', minAge: 4, maxAge: 6,
+    capacity: 4, capacityNote: 'Beginners need an instructor within arm’s reach',
     location: 'Northside Aquatic Center', price: 85, dates: 'Jan 5 – Feb 23',
     description: 'Water comfort, floating and kicking with support. For kids who are new to lessons.',
     sections: [
-      { id: 'swim1-mon', day: 'Mondays', time: '4:00–4:45 pm', capacity: CAP, enrolled: 2 },
-      { id: 'swim1-wed', day: 'Wednesdays', time: '4:00–4:45 pm', capacity: CAP, enrolled: 5, waitlist: 1 },
+      { id: 'swim1-mon', day: 'Mondays', time: '4:00–4:45 pm', enrolled: 2 },
+      { id: 'swim1-wed', day: 'Wednesdays', time: '4:00–4:45 pm', enrolled: 4, waitlist: 1 },
     ],
   },
   {
     id: 'swim2', name: 'Swim Level 2', category: 'Aquatics', minAge: 6, maxAge: 8,
+    capacity: 6, capacityNote: '1 instructor per 6 swimmers',
     location: 'Northside Aquatic Center', price: 85, dates: 'Jan 6 – Feb 28',
     description: 'Front and back glides, rhythmic breathing, and swimming 5 yards on their own. Kids should be comfortable putting their face in the water.',
     sections: [
-      { id: 'swim2-tue', day: 'Tuesdays', time: '4:00–5:00 pm', capacity: CAP, enrolled: 3 },
-      { id: 'swim2-thu', day: 'Thursdays', time: '4:00–5:00 pm', capacity: CAP, enrolled: 4 },
-      { id: 'swim2-sat', day: 'Saturdays', time: '10:00–11:00 am', capacity: CAP, enrolled: 5, waitlist: 2 },
+      { id: 'swim2-tue', day: 'Tuesdays', time: '4:00–5:00 pm', enrolled: 3 },
+      { id: 'swim2-thu', day: 'Thursdays', time: '4:00–5:00 pm', enrolled: 5 },
+      { id: 'swim2-sat', day: 'Saturdays', time: '10:00–11:00 am', enrolled: 6, waitlist: 2 },
     ],
   },
   {
     id: 'art', name: 'Art Studio: Clay & Paint', category: 'Arts', minAge: 5, maxAge: 10,
+    capacity: 10, capacityNote: 'Limited by studio tables and kiln space',
     location: 'Oak Street Arts Studio', price: 95, dates: 'Jan 7 – Feb 28',
     description: 'Hand-building with clay, then glazing and painting what they made. All materials included. Wear clothes that can get messy.',
     sections: [
-      { id: 'art-wed', day: 'Wednesdays', time: '3:30–5:00 pm', capacity: CAP, enrolled: 1 },
-      { id: 'art-sat', day: 'Saturdays', time: '1:00–2:30 pm', capacity: CAP, enrolled: 4 },
+      { id: 'art-wed', day: 'Wednesdays', time: '3:30–5:00 pm', enrolled: 3 },
+      { id: 'art-sat', day: 'Saturdays', time: '1:00–2:30 pm', enrolled: 9 },
     ],
   },
   {
     id: 'bball', name: 'Youth Basketball Camp', category: 'Sports', minAge: 9, maxAge: 12,
+    capacity: 16, capacityNote: '2 coaches, 8 players each, one court', opensInMs: 3 * 60 * 1000,
     location: 'Central Rec Gym', price: 140, dates: 'Winter break, Mon–Fri',
     description: 'A week of dribbling, passing and small-sided games. Bring a water bottle and court shoes.',
     sections: [
-      { id: 'bball-w1', day: 'Jan 5–9', time: 'Mon–Fri, 9 am–12 pm', capacity: CAP, enrolled: 2 },
-      { id: 'bball-w2', day: 'Jan 12–16', time: 'Mon–Fri, 9 am–12 pm', capacity: CAP, enrolled: 5 },
+      { id: 'bball-w1', day: 'Jan 5–9', time: 'Mon–Fri, 9 am–12 pm', enrolled: 0 },
+      { id: 'bball-w2', day: 'Jan 12–16', time: 'Mon–Fri, 9 am–12 pm', enrolled: 0 },
     ],
   },
   {
     id: 'climb', name: 'Teen Climbing', category: 'Sports', minAge: 13, maxAge: 17,
+    capacity: 6, capacityNote: '1 belay instructor per 3 climbers, 2 instructors', opensInDays: 14,
     location: 'Central Rec Climbing Wall', price: 110, dates: 'Jan 8 – Feb 26',
     description: 'Top-rope climbing with certified staff, plus knots and belay basics. Harness and shoes provided.',
-    sections: [{ id: 'climb-thu', day: 'Thursdays', time: '6:00–7:30 pm', capacity: CAP, enrolled: 4 }],
+    sections: [{ id: 'climb-thu', day: 'Thursdays', time: '6:00–7:30 pm', enrolled: 0 }],
   },
 ];
 
@@ -90,7 +101,7 @@ export async function seed(pool: pg.Pool): Promise<void> {
   const c = await pool.connect();
   try {
     await c.query('BEGIN');
-    await c.query('TRUNCATE notifications, waitlist_entries, holds, registrations, sections, programs, children, families RESTART IDENTITY CASCADE');
+    await c.query('TRUNCATE registration_reminders, notifications, waitlist_entries, holds, registrations, sections, programs, children, families RESTART IDENTITY CASCADE');
     await c.query("SELECT setval('confirmation_seq', 20417, false)");
 
     await c.query('INSERT INTO families (id, name) VALUES ($1, $2), ($3, $4)', [
@@ -101,16 +112,25 @@ export async function seed(pool: pg.Pool): Promise<void> {
       [DEMO_FAMILY],
     );
 
+    const now = clock.now().getTime();
     for (const [pi, p] of SEED_PROGRAMS.entries()) {
+      let opensAt: Date | null = null;
+      if (p.opensInMs) opensAt = new Date(now + p.opensInMs);
+      if (p.opensInDays) {
+        opensAt = new Date(now + p.opensInDays * DAY_MS);
+        opensAt.setHours(9, 0, 0, 0);
+      }
       await c.query(
-        `INSERT INTO programs (id, name, category, min_age, max_age, location, price_cents, dates_label, description, sort_order)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-        [p.id, p.name, p.category, p.minAge, p.maxAge, p.location, p.price * 100, p.dates, p.description, pi],
+        `INSERT INTO programs (id, name, category, min_age, max_age, location, price_cents, dates_label, description,
+                               capacity_note, registration_opens_at, sort_order)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+        [p.id, p.name, p.category, p.minAge, p.maxAge, p.location, p.price * 100, p.dates, p.description,
+          p.capacityNote, opensAt, pi],
       );
       for (const [si, s] of p.sections.entries()) {
         await c.query(
           `INSERT INTO sections (id, program_id, day_label, time_label, capacity, sort_order) VALUES ($1, $2, $3, $4, $5, $6)`,
-          [s.id, p.id, s.day, s.time, s.capacity, si],
+          [s.id, p.id, s.day, s.time, p.capacity, si],
         );
         for (let i = 0; i < s.enrolled; i++) {
           await c.query(

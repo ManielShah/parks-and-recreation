@@ -1,6 +1,6 @@
 import { pool } from './db.js';
 import { clock } from './clock.js';
-import { sweepSection } from './booking.js';
+import { sendOpeningReminders, sweepSection } from './booking.js';
 import { deliverOutbox } from './outbox.js';
 
 /** Release every expired hold and offer its spot to the waitlist. Safe to run on many servers at once. */
@@ -11,6 +11,7 @@ export async function sweepOnce(): Promise<number> {
     [now],
   );
   for (const r of rows) await sweepSection(r.section_id, now);
+  await sendOpeningReminders(now);
   return rows.length;
 }
 

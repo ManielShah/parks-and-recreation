@@ -16,6 +16,7 @@
 .name { font-size: 16px; font-weight: 700; }
 .sub { font-size: 14px; color: var(--color-ink-muted); }
 .pos { font-size: 14px; font-weight: 600; color: var(--color-blue); }
+.detail { font-size: 13px; color: var(--color-ink-muted); }
 .offer {
   composes: row;
   padding: 14px;

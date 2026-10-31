@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import type { Program } from '@parks/shared';
+import { classSize, type Program } from '@parks/shared';
 import { money } from '../domain/format';
 import { programAvailability, type Model } from '../domain/model';
 import { Button } from './Button';
@@ -22,6 +22,7 @@ export function ProgramCard({ model, program }: { model: Model; program: Program
         <h3 className={styles.name}>{program.name}</h3>
         <span className={styles.meta}>{program.sections.map((s) => s.day).join(' · ')}</span>
         <span className={styles.meta}>{program.location}</span>
+        <span className={styles.meta}>Up to {classSize(program)} kids per class</span>
         <div className={styles.foot}>
           <span className={`${styles.avail} ${styles[avail.tone]}`}>{avail.label}</span>
           <span className={styles.price}>{money(program.priceCents)}</span>

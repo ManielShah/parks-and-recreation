@@ -22,6 +22,8 @@ interface Ctx {
   /** Run a mutation, refresh state, and turn API errors into a warning toast. Resolves to null on failure. */
   run: <T>(fn: () => Promise<T>) => Promise<T | null>;
   refresh: () => Promise<void>;
+  /** Refetch programs, e.g. after dev tools reseed opening times. */
+  reloadCatalog: () => Promise<void>;
 }
 
 const RegistrationContext = createContext<Ctx | null>(null);
@@ -52,8 +54,16 @@ export function RegistrationProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const reloadCatalog = useCallback(async () => {
+    try {
+      setPrograms((await api.catalog()).programs);
+    } catch (err) {
+      setLoadError(String(err));
+    }
+  }, []);
+
   useEffect(() => {
-    api.catalog().then((c) => setPrograms(c.programs), (err) => setLoadError(String(err)));
+    void reloadCatalog();
     void refresh();
     const poll = setInterval(refresh, POLL_MS);
     const clock = setInterval(() => setTick(Date.now()), 1000);
@@ -61,7 +71,7 @@ export function RegistrationProvider({ children }: { children: ReactNode }) {
       clearInterval(poll);
       clearInterval(clock);
     };
-  }, [refresh]);
+  }, [refresh, reloadCatalog]);
 
   const run = useCallback(
     async <T,>(fn: () => Promise<T>): Promise<T | null> => {
@@ -83,8 +93,8 @@ export function RegistrationProvider({ children }: { children: ReactNode }) {
   );
 
   const value = useMemo(
-    () => ({ model, loadError, toast, showToast: setToast, lastOrder, setLastOrder, run, refresh }),
-    [model, loadError, toast, lastOrder, run, refresh],
+    () => ({ model, loadError, toast, showToast: setToast, lastOrder, setLastOrder, run, refresh, reloadCatalog }),
+    [model, loadError, toast, lastOrder, run, refresh, reloadCatalog],
   );
   return <RegistrationContext.Provider value={value}>{children}</RegistrationContext.Provider>;
 }

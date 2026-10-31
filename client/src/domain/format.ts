@@ -12,4 +12,9 @@ export function money(cents: number): string {
   return cents % 100 === 0 ? `$${cents / 100}` : `$${(cents / 100).toFixed(2)}`;
 }
 
+/** "Sat, Nov 14, 9:00 AM" */
+export function when(ts: number): string {
+  return new Date(ts).toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
 export const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);

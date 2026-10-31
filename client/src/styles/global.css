@@ -14,7 +14,7 @@ a:hover { color: var(--color-blue-hover); }
 button { font-family: inherit; cursor: pointer; }
 button:disabled { cursor: not-allowed; }
 select { font-family: inherit; }
-button:focus-visible, select:focus-visible, a:focus-visible {
+button:focus-visible, select:focus-visible, input:focus-visible, a:focus-visible {
   outline: 3px solid var(--color-blue);
   outline-offset: 2px;
 }

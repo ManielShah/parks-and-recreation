@@ -23,12 +23,13 @@
   border-radius: var(--radius-pill);
   background: var(--color-surface);
 }
-.body { padding: 18px; display: flex; flex-direction: column; gap: 10px; flex: 1 1 auto; }
+.body { padding: 18px; display: flex; flex-direction: column; gap: 8px; flex: 1 1 auto; }
 .name { font-size: 22px; line-height: 1.2; }
 .meta { font-size: 14px; color: var(--color-ink-muted); line-height: 1.45; }
 .foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: auto; padding-top: 8px; }
 .avail { font-size: 14px; font-weight: 600; }
 .good { color: var(--color-green); }
 .warn { color: var(--color-orange); }
+.info { color: var(--color-blue); }
 .muted { color: var(--color-ink-muted); }
 .price { font-size: 18px; font-weight: 700; }

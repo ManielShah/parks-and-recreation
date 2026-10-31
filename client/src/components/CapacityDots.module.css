@@ -1,7 +1,7 @@
-.dots { display: flex; gap: 6px; }
+.dots { display: flex; flex-wrap: wrap; gap: 5px; }
 .dot, .swatch {
-  width: 20px;
-  height: 20px;
+  width: var(--dot-size, 20px);
+  height: var(--dot-size, 20px);
   border-radius: var(--radius-pill);
   display: inline-block;
 }

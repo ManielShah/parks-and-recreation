@@ -63,8 +63,25 @@ export function createApp() {
   }));
 
   app.post('/api/waitlist', wrap(async (req, res) => {
-    const { sectionId, childId } = sectionChild.parse(req.body);
-    res.status(201).json({ entry: await booking.joinWaitlist(familyOf(req), sectionId, childId, clock.now()) });
+    const { sectionId, childId, autoRegister } = sectionChild.extend({ autoRegister: z.boolean().default(false) }).parse(req.body);
+    res.status(201).json({ entry: await booking.joinWaitlist(familyOf(req), sectionId, childId, autoRegister, clock.now()) });
+  }));
+
+  app.patch('/api/waitlist/:id', wrap(async (req, res) => {
+    const { id } = idParam.parse(req.params);
+    const { autoRegister } = z.object({ autoRegister: z.boolean() }).parse(req.body);
+    await booking.setWaitlistMode(familyOf(req), id, autoRegister);
+    res.status(204).end();
+  }));
+
+  app.put('/api/programs/:id/reminder', wrap(async (req, res) => {
+    await booking.setReminder(familyOf(req), z.string().min(1).parse(req.params.id), true);
+    res.status(204).end();
+  }));
+
+  app.delete('/api/programs/:id/reminder', wrap(async (req, res) => {
+    await booking.setReminder(familyOf(req), z.string().min(1).parse(req.params.id), false);
+    res.status(204).end();
   }));
 
   app.delete('/api/waitlist/:id', wrap(async (req, res) => {

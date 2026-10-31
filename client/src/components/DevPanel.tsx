@@ -7,11 +7,12 @@ import styles from './DevPanel.module.css';
 
 /** Prototype controls: not part of the site. Only shown when the server runs with ENABLE_DEV_TOOLS. */
 export function DevPanel() {
-  const { model, run, showToast } = useRegistration();
+  const { model, run, showToast, reloadCatalog } = useRegistration();
   const [open, setOpen] = useState(true);
   if (!model?.state.dev.enabled) return null;
 
   const mins = Math.round(model.state.dev.clockOffsetMs / 60_000);
+  const ahead = mins >= 60 ? `${Math.floor(mins / 60)} h ${mins % 60} min` : `${mins} min`;
   const simulate = async (fn: () => Promise<{ ok: boolean }>, ok: string, fail: string) => {
     const res = await run(fn);
     if (res) showToast({ text: res.ok ? ok : fail, tone: 'info' });
@@ -28,7 +29,7 @@ export function DevPanel() {
             </button>
           </div>
           <span className={styles.note}>
-            Not part of the site. Other families are simulated. {mins ? `Clock is ${mins} min ahead.` : ''}
+            Not part of the site. Other families are simulated. {mins ? `Clock is ${ahead} ahead.` : ''}
           </span>
           <button type="button" className={styles.control} onClick={() => run(() => api.dev.advance(60_000))}>Skip ahead 1 minute</button>
           <button type="button" className={styles.control} onClick={() => run(() => api.dev.advance(HOLD_MS))}>Skip ahead 5 minutes</button>
@@ -51,7 +52,7 @@ export function DevPanel() {
           >
             Another family carts Art · Saturdays
           </button>
-          <button type="button" className={styles.reset} onClick={() => run(async () => { await api.dev.reset(); showToast(null); })}>
+          <button type="button" className={styles.reset} onClick={() => run(async () => { await api.dev.reset(); await reloadCatalog(); showToast(null); })}>
             Reset demo
           </button>
         </div>
