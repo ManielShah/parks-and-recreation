@@ -4,6 +4,9 @@ services:
     volumes:
       - ../..:/workspaces:cached
     command: sleep infinity
+    environment:
+      # Let Codespaces port forwarding reach the Vite dev server.
+      VITE_HOST: 0.0.0.0
     # Share the database container's network so Postgres is on localhost, as in .env.example.
     network_mode: service:db
 

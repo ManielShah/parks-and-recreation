@@ -8,7 +8,7 @@
     "5173": { "label": "Registration site", "onAutoForward": "openBrowser" },
     "4000": { "label": "API", "onAutoForward": "silent" }
   },
-  "postCreateCommand": "cp -n .env.example .env; npm install && npm run db:seed",
+  "postCreateCommand": "cp -n .env.example .env; npm install && for i in $(seq 1 30); do npm run db:seed && break; echo 'Waiting for Postgres…'; sleep 2; done",
   "postAttachCommand": "npm run dev",
   "customizations": {
     "codespaces": { "openFiles": ["README.md"] }
