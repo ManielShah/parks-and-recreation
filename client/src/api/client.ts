@@ -1,24 +1,6 @@
 import type {
-  AddToCartResponse, ApiError, CatalogResponse, CheckoutResponse, ErrorCode, JoinWaitlistResponse, StaffOverviewResponse, StateResponse,
+  AddToCartResponse, ApiError, CatalogResponse, CheckoutResponse, ErrorCode, JoinWaitlistResponse, StateResponse,
 } from '@parks/shared';
-
-/** Staff token for /api/staff/*, kept in this browser only. A stand-in until staff sign-in exists. */
-export const staffToken = {
-  get: (): string => {
-    try {
-      return localStorage.getItem('staffToken') ?? '';
-    } catch {
-      return '';
-    }
-  },
-  set: (token: string): void => {
-    try {
-      localStorage.setItem('staffToken', token);
-    } catch {
-      // Storage blocked: the token lasts until reload.
-    }
-  },
-};
 
 export class ApiRequestError extends Error {
   constructor(public code: ErrorCode, message: string, public status: number) {
@@ -29,7 +11,6 @@ export class ApiRequestError extends Error {
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
   const headers: Record<string, string> = {};
   if (body !== undefined) headers['content-type'] = 'application/json';
-  if (path.startsWith('/staff/') && staffToken.get()) headers['x-staff-token'] = staffToken.get();
   const res = await fetch(`/api${path}`, {
     method,
     headers,
@@ -58,12 +39,6 @@ export const api = {
   declineOffer: (holdId: string) => call<void>('POST', `/offers/${holdId}/decline`),
   claim: (entryId: string) => call<CheckoutResponse>('POST', `/waitlist/${entryId}/claim`),
   withdraw: (registrationId: string) => call<void>('POST', `/registrations/${registrationId}/withdraw`),
-  staff: {
-    overview: () => call<StaffOverviewResponse>('GET', '/staff/overview'),
-    offer: (sectionId: string, minutes: number) => call<void>('POST', `/staff/sections/${sectionId}/offer`, { minutes }),
-    lastCall: (sectionId: string, minutes: number) =>
-      call<{ notified: number }>('POST', `/staff/sections/${sectionId}/last-call`, { minutes }),
-  },
   dev: {
     sectionStart: (sectionId: string, minutesFromNow: number) =>
       call<void>('POST', '/dev/section-start', { sectionId, minutesFromNow }),

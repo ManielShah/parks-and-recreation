@@ -32,9 +32,8 @@ npm run db:seed
 npm run dev
 ```
 
-The family site runs at http://localhost:5173 and the staff view at http://localhost:5173/staff. The **Prototype
-controls** panel simulates other families, skips the clock, and moves a class's start time so you can watch the
-waitlist rules change.
+The site runs at http://localhost:5173. The **Prototype controls** panel simulates other families, skips the clock,
+and moves a class's start time so you can watch the waitlist rules change.
 
 Tests run against a real Postgres, not mocks:
 
@@ -68,7 +67,7 @@ Behind it is the part that's hard to get right: **what happens when many familie
 | **Every booking change locks the section's row, recounts seats, then writes.** A database trigger re-checks capacity at commit | Registrations, cancellations and waitlist acceptances can arrive at the same instant. Requests queue instead of failing: two families clicking two open seats both get one, and 25 clicking the last seat get exactly one winner. The trigger means even a future bug can't commit an overbooked class |
 | **A strict first-come-first-served waitlist.** Each freed seat is offered to one family at a time, and nobody else can take it meanwhile | Families who waited longest go first, and two families can never both accept the same seat |
 | **Offer windows shrink as class approaches.** 2 hours when the class is over a day away, then 30 minutes, then 10. Under 20 minutes, staff decide | A 2-hour window the night before class means an empty seat. Shorter windows keep the line moving, and the window is set from each section's real `starts_at` |
-| **Staff overrides at `/staff`.** Offer a seat to the next family with any window, or send a *last call* where the first waitlisted family to claim it wins | The last minutes before class need a human: strict order or fill the seat? A last call trades fairness for seat use, so a person makes that call |
+| **Staff overrides** (API: `POST /api/staff/sections/:id/offer` and `/last-call`). Offer a seat to the next family with any window, or send a *last call* where the first waitlisted family to claim it wins | The last minutes before class need a human: strict order or fill the seat? A last call trades fairness for seat use, so a person makes that call. Families see last calls in the app |
 | **Charge only on acceptance.** *Accept and pay* registers and charges in one step; an ignored offer costs nothing | Families should never be charged for something they didn't confirm |
 | **Families can't see each other.** Other families' carts and offers reach the browser only as a "taken" count | Countdowns like "someone has this seat for 2:29" invite gaming and anxiety, and leak other families' activity |
 | **An audit trail.** Every join, offer, accept, decline, expiry and claim is recorded with who did it, in the same transaction as the change | Disputes ("I never got an offer!") need a record that can't disagree with the data |
@@ -76,14 +75,19 @@ Behind it is the part that's hard to get right: **what happens when many familie
 
 ## What I deferred and why
 
+None of these change the agreed rules (capacity, first-come-first-served, offer windows, charge only on acceptance,
+privacy between families). Each one builds on them.
+
 | Deferred | Why |
 |---|---|
 | **Real payments, texts, emails and sign-in** | Integrations, not product logic. Each has a clear seam: payment hooks in `checkout` and `registerFromWaitlist`, the delivery outbox in `server/src/outbox.ts`, families identified by an `X-Family-Id` header and staff by a shared `STAFF_TOKEN` |
+| **A staff screen** | A nice-to-have. The staff overrides the requirements call for exist as API endpoints (`/api/staff/overview`, `/offer`, `/last-call`) with tests; a screen on top of them can come later |
+| **Joining the waitlist when you lose the race for the last seat** | Today the family sees "That section just filled up" and joins the waitlist themselves. A one-tap or automatic join is better for them, but needs a product decision (consent, notifications) |
 | **Live updates** (server-sent events) | Polling every 2 seconds was enough to prove the rules. The cost: a family can see a seat that was just taken, click, and lose. They lose safely, with no double booking and no charge, but it's disappointing |
-| **What happens when you lose the race for the last seat** | Today the family sees "That section just filled up" and has to join the waitlist themselves. Joining them automatically is better for them, but it's a product decision (consent, notifications), so I didn't make it alone |
 | **A cancellation and refund policy** | Undecided, so the site says *[TO BE CONFIRMED]* rather than inventing one. Withdrawing frees the seat; refunds aren't built |
-| **Sibling discount** | A nice-to-have, not core to registering safely. It touches pricing, checkout totals and refunds, and would need rules first (which sibling gets the discount, and whether it applies across programs and to waitlist acceptances). Prices are already stored per registration, so it can be added later without changing past orders |
+| **Sibling discount** | A nice-to-have, not core to registering safely. It touches pricing, checkout totals and refunds, and needs rules first (which sibling gets it, and whether it applies across programs and to waitlist acceptances). Prices are stored per registration, so it can be added without changing past orders |
 | **Late registration after a session starts** | `starts_at` is the first class only. Joining a class already under way needs its own rules (pro-rating, instructor approval) |
+| **Polish and extra hardening** | Two notices arriving together show only the newest, and a toast can cover the *Accept and pay* button. The sweeper's skip-a-failing-section path has no test. No load test yet |
 
 ## What I'd push back on and why
 
@@ -95,12 +99,16 @@ Behind it is the part that's hard to get right: **what happens when many familie
 
 ## What I'd do next with more time
 
-1. **Make losing the last seat painless.** Put "Join the waitlist — you'd be #1" in the "just filled up" message, joined in the same request so nobody can get ahead of you.
-2. **Live updates** via server-sent events, so a taken seat disappears from every screen almost at once.
-3. **Real integrations:** a payment provider that charges a saved card on accept (a declined card rolls the acceptance back), SMS and email delivery, and family and staff accounts.
-4. **Use the audit trail.** Report offer acceptance rates and how long seats sat empty, then tune the window bands with real data.
-5. **Heavier concurrency testing:** randomized interleavings and a load test against a busy registration opening.
-6. **Smaller fixes:** queue notification toasts so none are lost and none cover the *Accept and pay* button; add a test for the sweeper skipping a failing section.
+The deferred list above, in the order I'd tackle it:
+
+1. **Real integrations.** A payment provider that charges a saved card on accept (a declined card rolls the acceptance back), SMS and email delivery, and family and staff sign-in. Without these it can't launch.
+2. **Polish and extra hardening.** Queue notification toasts so none are lost or cover *Accept and pay*, test the sweeper's failure path, and load-test a busy registration opening.
+3. **A staff screen** for the existing overrides, so staff don't need the API in the last minutes before class.
+4. **Joining the waitlist when you lose the race:** "Join the waitlist — you'd be #1" in the "just filled up" message, joined in the same request so nobody gets ahead of you.
+5. **Live updates** via server-sent events, so a taken seat disappears from every screen almost at once.
+6. **Cancellation and refunds**, once the policy is decided.
+7. **Sibling discount**, once its rules are agreed.
+8. **Late registration** for sessions already under way.
 
 ---
 
@@ -161,7 +169,7 @@ server/src/booking.ts    every booking rule: holds, checkout, waitlist, offers, 
 shared/src/index.ts      offer windows (offerWindowMs, autoOfferExpiry), shared types
 server/migrations/       schema: starts_at, capacity trigger, audit trail
 server/test/             41 tests against Postgres, including regression tests for the bugs above
-client/src/              React screens (family site and /staff), components, design tokens
+client/src/              React screens, components, design tokens
 ```
 
 </details>

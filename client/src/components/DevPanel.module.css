@@ -30,8 +30,6 @@
   font-weight: 600;
 }
 .row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
-a.control { display: flex; align-items: center; justify-content: center; text-decoration: none; }
-a.control:hover { color: var(--color-ground); }
 .reset { composes: control; border-color: var(--color-ground); background: var(--color-ground); color: var(--color-ink); font-weight: 700; }
 .open {
   min-height: var(--touch);

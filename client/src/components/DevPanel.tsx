@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
 import { HOLD_MS, OFFER_MS } from '@parks/shared';
 import { api } from '../api/client';
 import { useRegistration } from '../state/RegistrationProvider';
@@ -69,7 +68,6 @@ export function DevPanel() {
               </button>
             ))}
           </div>
-          <Link to="/staff" className={styles.control}>Open staff view</Link>
           <button type="button" className={styles.reset} onClick={() => run(async () => { await api.dev.reset(); await reloadCatalog(); showToast(null); })}>
             Reset demo
           </button>
