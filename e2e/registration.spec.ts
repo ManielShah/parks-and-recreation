@@ -11,10 +11,10 @@ test('browse, filter by age, hold a seat and check out', async ({ page }) => {
   await open(page, '/');
   await expect(page.getByRole('heading', { name: 'Winter registration is open' })).toBeVisible();
 
-  // A program matches an age if any of its sections takes that age.
+  // A program matches an age if any of its sections takes that age (open sections take any age).
   await page.getByRole('button', { name: 'Leo · 10' }).click();
-  await expect(page.getByRole('heading', { name: '2 programs for age 10' })).toBeVisible();
-  await expect(page.getByRole('heading', { level: 3 })).toHaveText(['Art Studio: Clay & Paint', 'Youth Basketball Camp']);
+  await expect(page.getByRole('heading', { name: '3 programs for age 10' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 3 })).toHaveText(['Swim Level 2', 'Art Studio: Clay & Paint', 'Youth Basketball Camp']);
 
   await openProgram(page, 'art');
   await section(page, 'art-sat').getByRole('button', { name: 'Add Maya to cart' }).click();
@@ -30,17 +30,33 @@ test('browse, filter by age, hold a seat and check out', async ({ page }) => {
   await expect(page.getByText('Art Studio: Clay & Paint')).toBeVisible();
 });
 
-test('an age-specific section turns away a child the program accepts', async ({ page }) => {
+test('ages are set per section: a limited section turns a child away, an open one takes them', async ({ page }) => {
   await openProgram(page, 'art');
+  await expect(page.getByText('Ages vary by section')).toBeVisible();
   await page.getByRole('button', { name: /^Leo/ }).click();
 
-  const wed = section(page, 'art-wed'); // ages 5–7 only
+  const wed = section(page, 'art-wed'); // ages 5–7
   await expect(wed.getByText('Ages 5–7', { exact: true })).toBeVisible();
-  await expect(wed.getByText('For ages 5–7 · Leo is 10')).toBeVisible();
+  await expect(wed.getByText('Ages 5–7 · Leo is 10')).toBeVisible();
   await expect(wed.getByRole('button', { name: 'Ages 5–7 only' })).toBeDisabled();
 
-  // Saturday has no age restriction of its own.
-  await expect(section(page, 'art-sat').getByRole('button', { name: 'Add Leo to cart' })).toBeEnabled();
+  const sat = section(page, 'art-sat'); // open to all ages
+  await expect(sat.getByText('All ages', { exact: true })).toBeVisible();
+  await expect(sat.getByRole('button', { name: 'Add Leo to cart' })).toBeEnabled();
+});
+
+test('a child registered for one section can still add another section of the same program', async ({ page }) => {
+  await openProgram(page, 'art');
+  await section(page, 'art-wed').getByRole('button', { name: 'Add Maya to cart' }).click();
+  await open(page, '/checkout');
+  await page.getByRole('button', { name: 'Pay $95 and register' }).click();
+  await expect(page.getByRole('heading', { name: "You're registered" })).toBeVisible();
+
+  await openProgram(page, 'art');
+  await expect(page.getByRole('button', { name: /^Maya/ })).toContainText('Registered Wednesdays · can add another day');
+  await expect(section(page, 'art-wed')).toContainText('Maya registered');
+  await section(page, 'art-sat').getByRole('button', { name: 'Add Maya to cart' }).click();
+  await expect(page.getByRole('status')).toContainText('You have the last spot in Art Studio: Clay & Paint · Saturdays');
 });
 
 test('waitlist offer: accepting registers and charges in one step', async ({ page, request }) => {

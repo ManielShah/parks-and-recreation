@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { classSize, hasOwnAges, type Program } from '@parks/shared';
+import { classSize, programAgeLabel, type Program } from '@parks/shared';
 import { money } from '../domain/format';
 import { programAvailability, type Model } from '../domain/model';
 import { Button } from './Button';
@@ -15,7 +15,7 @@ export function ProgramCard({ model, program }: { model: Model; program: Program
     <article className={styles.card}>
       <div className={styles.band} style={{ background: theme.bg, color: theme.ink }}>
         <CategoryIcon category={program.category} />
-        <span className={styles.ageBadge} style={{ color: theme.ink }}>Ages {program.minAge}–{program.maxAge}</span>
+        <span className={styles.ageBadge} style={{ color: theme.ink }}>{programAgeLabel(program)}</span>
       </div>
       <div className={styles.body}>
         <span className="eyebrow">{program.category}</span>
@@ -23,7 +23,7 @@ export function ProgramCard({ model, program }: { model: Model; program: Program
         <span className={styles.meta}>{program.sections.map((s) => s.day).join(' · ')}</span>
         <span className={styles.meta}>{program.location}</span>
         <span className={styles.meta}>
-          Up to {classSize(program)} kids per class{program.sections.some((s) => hasOwnAges(program, s)) ? ' · ages vary by section' : ''}
+          Up to {classSize(program)} kids per class
         </span>
         <div className={styles.foot}>
           <span className={`${styles.avail} ${styles[avail.tone]}`}>{avail.label}</span>

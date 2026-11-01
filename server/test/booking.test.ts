@@ -98,14 +98,23 @@ describe('concurrent booking requests', () => {
     assert.equal(rows[0].n, t.regs - 3);
   });
 
-  test('one child cannot be booked into two sections of a program at once', async () => {
+  test('one child can never take the same section twice, even with simultaneous requests', async () => {
     const [f] = await makeFamilies(1);
     const now = clock.now();
     const results = await Promise.allSettled([
       booking.addToCart(f!.family, 'art-wed', f!.child, now),
-      booking.addToCart(f!.family, 'art-sat', f!.child, now),
+      booking.addToCart(f!.family, 'art-wed', f!.child, now),
     ]);
     assert.deepEqual(results.map(codeOf).sort(), ['already_involved', 'ok']);
+  });
+
+  test('a child registered for one day of a program can still add another day (reported bug)', async () => {
+    const [f] = await makeFamilies(1);
+    const tue = await booking.addToCart(f!.family, 'swim2-tue', f!.child, clock.now());
+    await booking.checkout(f!.family, [tue.hold.id], clock.now());
+    clock.advance(HOLD_MS); // let the seeded hold on Thursday's last seat lapse
+    await sweepOnce();
+    await booking.addToCart(f!.family, 'swim2-thu', f!.child, clock.now());
   });
 
   test('a family can hold at most 3 spots, even when requests arrive together', async () => {
@@ -512,19 +521,19 @@ describe('charging waitlisted families', () => {
 });
 
 describe('section age limits', () => {
-  test('an age-specific section turns away a child its program would take, while an open section accepts them', async () => {
-    const [leo] = await makeFamilies(1, 10); // Art Studio takes 5–10; its Wednesday section is 5–7 only
+  test('an age-limited section turns a child away, while an open section of the same program accepts them', async () => {
+    const [leo] = await makeFamilies(1, 10); // Art Wednesdays are ages 5–7; Saturdays are open to all ages
     await assert.rejects(booking.addToCart(leo!.family, 'art-wed', leo!.child, clock.now()), { code: 'not_eligible' });
     await booking.addToCart(leo!.family, 'art-sat', leo!.child, clock.now());
   });
 
   test('the waitlist checks the section’s ages too', async () => {
-    const [six] = await makeFamilies(1, 6); // Swim 2 takes 6–8; Saturdays are 7–8 only, Thursdays aren't restricted
+    const [six] = await makeFamilies(1, 6); // Swim 2 Saturdays are ages 7–8; Thursdays are open to all ages
     await assert.rejects(booking.joinWaitlist(six!.family, 'swim2-sat', six!.child, clock.now()), { code: 'not_eligible' });
     await booking.joinWaitlist(six!.family, 'swim2-thu', six!.child, clock.now());
   });
 
-  test('the catalog sends each section’s own limits, or null where the program’s apply', async () => {
+  test('the catalog sends each section’s limits, with null for a section open to all ages', async () => {
     const res = await request(createApp()).get('/api/catalog').expect(200);
     const swim2 = res.body.programs.find((p: { id: string }) => p.id === 'swim2');
     assert.deepEqual(

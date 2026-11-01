@@ -14,7 +14,7 @@
 
 ## Try it without a local server
 
-- **See it tested.** Every push runs the 41 API tests and 8 end-to-end tests in a real browser on GitHub Actions. Open the [latest run](https://github.com/ManielShah/parks-and-recreation/actions/workflows/e2e.yml) and download **playwright-report** for a video of each flow: browse and check out, section age limits, a waitlist offer accepted and paid, offer windows shrinking as class approaches, and the seat held for the waitlist in the last 20 minutes.
+- **See it tested.** Every push runs the 42 API tests and 9 end-to-end tests in a real browser on GitHub Actions. Open the [latest run](https://github.com/ManielShah/parks-and-recreation/actions/workflows/e2e.yml) and download **playwright-report** for a video of each flow: browse and check out, section age limits, a waitlist offer accepted and paid, offer windows shrinking as class approaches, and the seat held for the waitlist in the last 20 minutes.
 - **Click through it yourself.** [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/ManielShah/parks-and-recreation?quickstart=1) starts Postgres, seeds the demo and opens the site in your browser. It takes a few minutes the first time. Run `npm test` in its terminal for the API tests.
 
 ## Quick start
@@ -70,7 +70,7 @@ npm run e2e
 
 A family-facing registration site built from the provided design, on a React + TypeScript front end and a Postgres
 back end:
-- browse programs, pick a child, and choose a section. A section can have its own narrower age range (say, a 9–10 week of a 9–12 camp), while others take the program's full range
+- browse programs, pick a child, and choose a section. Age limits are set per section (say, a 9–10 week and an 11–12 week of a basketball camp), and a section can be open to all ages. A child can take more than one section of a program, never the same one twice
 - hold a seat in a cart for 5 minutes, then check out
 - join a waitlist when a section is full
 - manage everything under *My registrations*
@@ -148,6 +148,7 @@ How I worked with it:
 - **It built "accept, then pay at checkout" as two steps.** I changed it to charge at the moment of acceptance.
 - **It implemented the design's "held for another family" dots and countdowns.** I had them removed. It then also stopped the API from sending that data at all, so it can't be found by inspecting the page.
 - **"Can two families book the last seat?"** Its answer, that the database lock makes it safe, was correct but incomplete. I pointed out that the 24 losing families still *saw* an open seat and expected to get it. That user-experience gap is now first on the next-steps list.
+- **Testing it by hand in Codespaces, I found two bugs its tests had missed.** Age limits still lived on programs even though I'd asked for them per section, and a child registered for one day of a program couldn't add another day (a rule it had carried over from the design without asking). Both are fixed, with regression tests.
 - **Smaller corrections:**
   - Some of its own tests had wrong expectations, or failed now and then because they read the clock twice. It caught and fixed these itself.
 
@@ -183,8 +184,8 @@ the code never asks for. Reasoning about the code wasn't enough; probing it agai
 server/src/booking.ts    every booking rule: holds, checkout, waitlist, offers, staff overrides
 shared/src/index.ts      offer windows (offerWindowMs, autoOfferExpiry), shared types
 server/migrations/       schema: starts_at, capacity trigger, audit trail
-server/test/             41 tests against Postgres, including regression tests for the bugs above
-e2e/                     8 browser tests of the main flows (Playwright); .github/workflows runs both on every push
+server/test/             42 tests against Postgres, including regression tests for the bugs above
+e2e/                     9 browser tests of the main flows (Playwright); .github/workflows runs both on every push
 client/src/              React screens, components, design tokens
 ```
 

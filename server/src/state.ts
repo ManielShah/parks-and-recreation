@@ -5,7 +5,7 @@ import { config } from './config.js';
 
 export async function getCatalog(): Promise<CatalogResponse> {
   const { rows: programs } = await pool.query(
-    `SELECT id, name, category, min_age, max_age, location, price_cents, dates_label, description,
+    `SELECT id, name, category, location, price_cents, dates_label, description,
             capacity_note, registration_opens_at
        FROM programs ORDER BY sort_order, id`,
   );
@@ -14,7 +14,7 @@ export async function getCatalog(): Promise<CatalogResponse> {
   );
   return {
     programs: programs.map((p): Program => ({
-      id: p.id, name: p.name, category: p.category as Category, minAge: p.min_age, maxAge: p.max_age,
+      id: p.id, name: p.name, category: p.category as Category,
       location: p.location, priceCents: p.price_cents, dates: p.dates_label, description: p.description,
       capacityNote: p.capacity_note, registrationOpensAt: p.registration_opens_at ? p.registration_opens_at.getTime() : null,
       sections: sections

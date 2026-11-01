@@ -1,5 +1,5 @@
 import {
-  AUTO_PROMOTION_CUTOFF_MS, CART_MAX, HOLD_MS, autoOfferExpiry, formatDuration, isAgeEligible,
+  AUTO_PROMOTION_CUTOFF_MS, CART_MAX, HOLD_MS, autoOfferExpiry, formatDuration, isAgeEligible, sectionAgeLabel,
   type ErrorCode, type Hold, type Registration, type Tone, type WaitlistEntry,
 } from '@parks/shared';
 import { pool, tx, type Db } from './db.js';
@@ -33,8 +33,9 @@ interface SectionRow {
   id: string;
   capacity: number;
   program_id: string;
-  min_age: number;
-  max_age: number;
+  /** Section age limits; null means no limit on that end. */
+  min_age: number | null;
+  max_age: number | null;
   price_cents: number;
   label: string;
   registration_opens_at: Date | null;
@@ -44,8 +45,7 @@ interface SectionRow {
 
 const SECTION_SELECT = `
   SELECT s.id, s.capacity, s.program_id, s.starts_at, s.last_call_until,
-         -- A section's own age range, where it has one, replaces the program's.
-         COALESCE(s.min_age, p.min_age) AS min_age, COALESCE(s.max_age, p.max_age) AS max_age,
+         s.min_age, s.max_age,
          p.price_cents, p.registration_opens_at,
          p.name || ' · ' || s.day_label AS label
     FROM sections s JOIN programs p ON p.id = s.program_id
@@ -249,21 +249,28 @@ function assertOpen(s: SectionRow, now: Date): void {
   }
 }
 
-/** A child may be in only one section of a program, in any state. Caller holds the child lock. */
-async function assertChildFree(c: Db, childId: string, programId: string, now: Date): Promise<void> {
+/**
+ * A child can be in a section only once, in any state (registered, held or waitlisted).
+ * Other sections of the same program stay open to them, e.g. a second swim day.
+ * Caller holds the child lock.
+ */
+async function assertChildFree(c: Db, childId: string, sectionId: string, now: Date): Promise<void> {
   const { rows } = await c.query<{ state: string }>(
-    `SELECT 'registered' AS state FROM registrations r JOIN sections s ON s.id = r.section_id
-       WHERE r.child_id = $1 AND s.program_id = $2 AND r.withdrawn_at IS NULL
+    `SELECT 'registered for' AS state FROM registrations WHERE child_id = $1 AND section_id = $2 AND withdrawn_at IS NULL
      UNION ALL
-     SELECT 'held' FROM holds h JOIN sections s ON s.id = h.section_id
-       WHERE h.child_id = $1 AND s.program_id = $2 AND h.expires_at > $3
+     SELECT 'holding a spot in' FROM holds WHERE child_id = $1 AND section_id = $2 AND expires_at > $3
      UNION ALL
-     SELECT 'waitlisted' FROM waitlist_entries w JOIN sections s ON s.id = w.section_id
-       WHERE w.child_id = $1 AND s.program_id = $2
+     SELECT 'on the waitlist for' FROM waitlist_entries WHERE child_id = $1 AND section_id = $2
      LIMIT 1`,
-    [childId, programId, now],
+    [childId, sectionId, now],
   );
-  if (rows[0]) throw new BookingError('already_involved', `This child is already ${rows[0].state} in this program.`);
+  if (rows[0]) throw new BookingError('already_involved', `This child is already ${rows[0].state} this section.`);
+}
+
+function assertAgeFits(child: { name: string; age: number }, s: SectionRow): void {
+  if (!isAgeEligible(child.age, { minAge: s.min_age, maxAge: s.max_age })) {
+    throw new BookingError('not_eligible', `${child.name} is outside this section's age range (${sectionAgeLabel({ minAge: s.min_age, maxAge: s.max_age })}).`);
+  }
 }
 
 function toHold(r: { id: string; section_id: string; kind: 'cart' | 'offer'; child_id: string | null; expires_at: Date }): Hold {
@@ -280,10 +287,8 @@ export async function addToCart(familyId: string, sectionId: string, childId: st
     await settleSection(c, s, now);
     assertOpen(s, now);
 
-    if (!isAgeEligible(child.age, { minAge: s.min_age, maxAge: s.max_age })) {
-      throw new BookingError('not_eligible', `${child.name} is outside this section's age range (${s.min_age}–${s.max_age}).`);
-    }
-    await assertChildFree(c, child.id, s.program_id, now);
+    assertAgeFits(child, s);
+    await assertChildFree(c, child.id, s.id, now);
 
     const { rows: cart } = await c.query<{ n: string }>(
       `SELECT count(*) AS n FROM holds WHERE family_id = $1 AND kind = 'cart' AND expires_at > $2`,
@@ -322,10 +327,8 @@ export async function joinWaitlist(familyId: string, sectionId: string, childId:
     await settleSection(c, s, now);
     assertOpen(s, now);
 
-    if (!isAgeEligible(child.age, { minAge: s.min_age, maxAge: s.max_age })) {
-      throw new BookingError('not_eligible', `${child.name} is outside this section's age range (${s.min_age}–${s.max_age}).`);
-    }
-    await assertChildFree(c, child.id, s.program_id, now);
+    assertAgeFits(child, s);
+    await assertChildFree(c, child.id, s.id, now);
     if ((await openSpots(c, s, now)) > 0 && (await waitlistLength(c, s.id)) === 0) {
       throw new BookingError('spots_open', 'A spot is open in this section. Add it to your cart instead.');
     }

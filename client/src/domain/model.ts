@@ -1,4 +1,4 @@
-import { CART_MAX, autoOfferExpiry, formatDuration, hasOwnAges, isAgeEligible, isRegistrationOpen, programSuits, sectionAges, type Hold, type Kid, type Program, type Section, type SectionLive, type StateResponse, type Tone } from '@parks/shared';
+import { CART_MAX, autoOfferExpiry, formatDuration, isAgeEligible, isRegistrationOpen, programAgeLabel, programSuits, sectionAgeLabel, type Hold, type Kid, type Program, type Section, type SectionLive, type StateResponse, type Tone } from '@parks/shared';
 import { countdown, money, plural, when } from './format';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -62,26 +62,34 @@ export function myHolds(m: Model, kind: Hold['kind']): MyHold[] {
 
 type Involvement = 'reg' | 'offer' | 'cart' | 'wait' | null;
 
-function involvement(m: Model, kidId: string, program: Program): Involvement {
-  for (const s of program.sections) {
-    if (m.state.registrations.some((r) => r.sectionId === s.id && r.childId === kidId)) return 'reg';
-    const holds = m.live(s.id).holds.filter((h) => h.childId === kidId);
-    if (holds.some((h) => h.kind === 'offer')) return 'offer';
-    if (holds.length) return 'cart';
-    if (m.state.waitlist.some((w) => w.sectionId === s.id && w.childId === kidId)) return 'wait';
-  }
+/** Where a child stands in one section, if anywhere. */
+function involvement(m: Model, kidId: string, sectionId: string): Involvement {
+  if (m.state.registrations.some((r) => r.sectionId === sectionId && r.childId === kidId)) return 'reg';
+  const holds = m.live(sectionId).holds.filter((h) => h.childId === kidId);
+  if (holds.some((h) => h.kind === 'offer')) return 'offer';
+  if (holds.length) return 'cart';
+  if (m.state.waitlist.some((w) => w.sectionId === sectionId && w.childId === kidId)) return 'wait';
   return null;
 }
 
+const INVOLVEMENT_LABEL: Record<NonNullable<Involvement>, string> = {
+  reg: 'Registered', offer: 'Spot offered', cart: 'In your cart', wait: 'Waitlisted',
+};
+
+/**
+ * Whether a child can be picked on a program's page: they can if some section fits their age and
+ * they aren't already in it. Being in one section (say, registered Tuesdays) doesn't block another.
+ */
 export function kidStatus(m: Model, kid: Kid, program: Program): { ok: boolean; reason: string } {
-  if (!programSuits(kid.age, program)) return { ok: false, reason: `Ages ${program.minAge}–${program.maxAge} only` };
-  switch (involvement(m, kid.id, program)) {
-    case 'reg': return { ok: false, reason: 'Already registered' };
-    case 'offer': return { ok: false, reason: 'Waitlist spot offered' };
-    case 'cart': return { ok: false, reason: 'In your cart' };
-    case 'wait': return { ok: false, reason: 'On the waitlist' };
-    default: return { ok: true, reason: `Age ${kid.age} · eligible` };
+  if (!programSuits(kid.age, program)) {
+    const label = programAgeLabel(program);
+    return { ok: false, reason: label.startsWith('Ages ') && label !== 'Ages vary by section' ? `${label} only` : `Not offered for age ${kid.age}` };
   }
+  const busy = program.sections.map((s) => ({ s, inv: involvement(m, kid.id, s.id) })).filter((x) => x.inv);
+  const busyLabel = busy[0] ? `${INVOLVEMENT_LABEL[busy[0].inv!]} ${busy[0].s.day}` : null;
+  const free = program.sections.some((s) => isAgeEligible(kid.age, s) && !involvement(m, kid.id, s.id));
+  if (!free) return { ok: false, reason: busyLabel ?? `Age ${kid.age}` };
+  return { ok: true, reason: busyLabel ? `${busyLabel} · can add another day` : `Age ${kid.age} · eligible` };
 }
 
 export function firstEligible(m: Model, program: Program): string | null {
@@ -134,7 +142,7 @@ export interface SectionView {
   time: string;
   /** "Mon, Jan 4, 4:00 PM" */
   firstClass: string;
-  /** "Ages 6–7", only for sections narrower than their program. */
+  /** "Ages 6–7", or "All ages" for an open section in a program where others have limits. */
   ages: string | null;
   dots: DotKind[];
   capacityLabel: string;
@@ -151,8 +159,11 @@ export interface SectionView {
 export function sectionView(m: Model, program: Program, section: Section, kid: Kid | null, kidOk: boolean): SectionView {
   const l = m.live(section.id);
   const opens = opening(m, program);
-  const range = sectionAges(program, section);
-  const ages = hasOwnAges(program, section) ? `Ages ${range.minAge}–${range.maxAge}` : null;
+  const ageLabel = sectionAgeLabel(section);
+  const anyLimited = program.sections.some((s) => sectionAgeLabel(s) !== null);
+  const ages = ageLabel ?? (anyLimited ? 'All ages' : null);
+  // The picked child already has a place here (registered, in the cart, offered or waiting).
+  const kidHere = !!kid && involvement(m, kid.id, section.id) !== null;
   const now = m.now;
   const mine = l.holds.filter((h) => h.kind === 'cart');
   const myOffer = l.holds.find((h) => h.kind === 'offer') ?? null;
@@ -189,18 +200,18 @@ export function sectionView(m: Model, program: Program, section: Section, kid: K
     note = `Up to ${l.capacity} kids · registration opens ${opens.at}`;
     tone = 'muted';
     action = { type: 'disabled', label: opens.buttonLabel };
-  } else if (needKid && household.length) {
+  } else if ((needKid || kidHere) && household.length) {
     note = hh;
     if (myOffer) { tone = 'good'; action = { type: 'accept', label: `Accept and pay ${money(program.priceCents)}`, holdId: myOffer.id }; }
     else if (myWait?.claimableUntil) { tone = 'good'; action = { type: 'claim', label: `Claim and pay ${money(program.priceCents)}`, entryId: myWait.id }; }
     else if (mine.length) { tone = 'info'; action = { type: 'checkout', label: 'Go to checkout' }; }
     else if (myWait && !myRegs.length) { tone = 'info'; secondary = true; action = { type: 'leave', label: 'Leave waitlist', entryId: myWait.id }; }
     else { tone = 'good'; secondary = true; action = { type: 'account', label: 'View registrations' }; }
-  } else if (kid && kidOk && !isAgeEligible(kid.age, range)) {
-    // The child suits the program but not this section's narrower ages.
-    note = `${pre}For ages ${range.minAge}–${range.maxAge} · ${kid.name} is ${kid.age}`;
+  } else if (kid && kidOk && !isAgeEligible(kid.age, section)) {
+    // The child suits another section of this program, but not this one's ages.
+    note = `${pre}${ageLabel} · ${kid.name} is ${kid.age}`;
     tone = 'muted';
-    action = { type: 'disabled', label: `${ages} only` };
+    action = { type: 'disabled', label: `${ageLabel} only` };
   } else if (open > 0) {
     note = pre + (open === 1 ? 'Only 1 spot left' : `${open} of ${l.capacity} spots open`);
     tone = open === 1 ? 'warn' : hh ? 'info' : 'muted';

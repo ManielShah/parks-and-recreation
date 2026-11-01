@@ -69,7 +69,7 @@ export interface Section {
   capacity: number;
   /** First class (epoch ms). Offer windows and automatic offers depend on it. */
   startsAt: number;
-  /** This section's own age limits, or null where the program's apply. */
+  /** Age limits for this section. Null means no limit on that end; both null means open to all ages. */
   minAge: number | null;
   maxAge: number | null;
 }
@@ -78,8 +78,6 @@ export interface Program {
   id: string;
   name: string;
   category: Category;
-  minAge: number;
-  maxAge: number;
   location: string;
   priceCents: number;
   dates: string;
@@ -242,22 +240,37 @@ export function classSize(program: Pick<Program, 'sections'>): number {
   return Math.max(0, ...program.sections.map((s) => s.capacity));
 }
 
-export function isAgeEligible(age: number, range: { minAge: number; maxAge: number }): boolean {
-  return age >= range.minAge && age <= range.maxAge;
+type AgeLimits = { minAge: number | null; maxAge: number | null };
+
+/** Whether a child fits a section's age limits. A section without limits takes any age. */
+export function isAgeEligible(age: number, section: AgeLimits): boolean {
+  return (section.minAge === null || age >= section.minAge) && (section.maxAge === null || age <= section.maxAge);
 }
 
-/** The ages a section actually takes: its own limits where set, the program's otherwise. */
-export function sectionAges(program: Pick<Program, 'minAge' | 'maxAge'>, section: Pick<Section, 'minAge' | 'maxAge'>) {
-  return { minAge: section.minAge ?? program.minAge, maxAge: section.maxAge ?? program.maxAge };
-}
-
-/** True when a section narrows its program's age range. */
-export function hasOwnAges(program: Pick<Program, 'minAge' | 'maxAge'>, section: Pick<Section, 'minAge' | 'maxAge'>): boolean {
-  const r = sectionAges(program, section);
-  return r.minAge !== program.minAge || r.maxAge !== program.maxAge;
+/** "Ages 6–7", "Ages 13+", "Up to age 5", or null for a section open to all ages. */
+export function sectionAgeLabel(section: AgeLimits): string | null {
+  const { minAge, maxAge } = section;
+  if (minAge !== null && maxAge !== null) return `Ages ${minAge}–${maxAge}`;
+  if (minAge !== null) return `Ages ${minAge}+`;
+  if (maxAge !== null) return `Up to age ${maxAge}`;
+  return null;
 }
 
 /** A program suits a child if any of its sections does. */
-export function programSuits(age: number, program: Pick<Program, 'minAge' | 'maxAge' | 'sections'>): boolean {
-  return program.sections.some((s) => isAgeEligible(age, sectionAges(program, s)));
+export function programSuits(age: number, program: Pick<Program, 'sections'>): boolean {
+  return program.sections.some((s) => isAgeEligible(age, s));
+}
+
+/**
+ * A program-level summary of its sections' ages: "All ages" when no section has limits,
+ * "Ages 6–8" (the span) when every section has both ends set, otherwise "Ages vary by section".
+ */
+export function programAgeLabel(program: Pick<Program, 'sections'>): string {
+  const limited = program.sections.filter((s) => s.minAge !== null || s.maxAge !== null);
+  if (limited.length === 0) return 'All ages';
+  const bounded = program.sections.every((s) => s.minAge !== null && s.maxAge !== null);
+  if (!bounded) return 'Ages vary by section';
+  const min = Math.min(...program.sections.map((s) => s.minAge!));
+  const max = Math.max(...program.sections.map((s) => s.maxAge!));
+  return `Ages ${min}–${max}`;
 }

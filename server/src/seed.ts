@@ -12,7 +12,7 @@ interface SeedSection {
   time: string;
   /** First class: days after the session's first Monday, and local start time. */
   start: { day: number; hour: number; minute?: number };
-  /** Narrower age range for this section only; omitted means the program's range applies. */
+  /** Age range for this section; omitted means open to all ages. */
   ages?: [number, number];
   enrolled: number;
   waitlist?: number;
@@ -22,8 +22,6 @@ interface SeedProgram {
   id: string;
   name: string;
   category: string;
-  minAge: number;
-  maxAge: number;
   location: string;
   price: number;
   dates: string;
@@ -55,27 +53,27 @@ function firstClass(sessionStart: Date, start: SeedSection['start']): Date {
 
 export const SEED_PROGRAMS: SeedProgram[] = [
   {
-    id: 'tots', name: 'Tiny Tumblers', category: 'Gymnastics', minAge: 3, maxAge: 5,
+    id: 'tots', name: 'Tiny Tumblers', category: 'Gymnastics',
     capacity: 8, capacityNote: '2 coaches, 4 kids each',
     location: 'Central Rec Gym', price: 70, dates: 'Jan 9 – Feb 27',
     description: 'Rolls, balance beams and soft landings for preschoolers. A parent or caregiver stays on deck for the first two classes.',
     sections: [
       { id: 'tots-fri', day: 'Fridays', time: '10:00–10:45 am', ages: [3, 4], start: { day: 4, hour: 10 }, enrolled: 5 },
-      { id: 'tots-sat', day: 'Saturdays', time: '9:00–9:45 am', start: { day: 5, hour: 9 }, enrolled: 4 },
+      { id: 'tots-sat', day: 'Saturdays', time: '9:00–9:45 am', ages: [3, 5], start: { day: 5, hour: 9 }, enrolled: 4 },
     ],
   },
   {
-    id: 'swim1', name: 'Swim Level 1', category: 'Aquatics', minAge: 4, maxAge: 6,
+    id: 'swim1', name: 'Swim Level 1', category: 'Aquatics',
     capacity: 4, capacityNote: 'Beginners need an instructor within arm’s reach',
     location: 'Northside Aquatic Center', price: 85, dates: 'Jan 5 – Feb 23',
     description: 'Water comfort, floating and kicking with support. For kids who are new to lessons.',
     sections: [
-      { id: 'swim1-mon', day: 'Mondays', time: '4:00–4:45 pm', start: { day: 0, hour: 16 }, enrolled: 2 },
-      { id: 'swim1-wed', day: 'Wednesdays', time: '4:00–4:45 pm', start: { day: 2, hour: 16 }, enrolled: 4, waitlist: 1 },
+      { id: 'swim1-mon', day: 'Mondays', time: '4:00–4:45 pm', ages: [4, 6], start: { day: 0, hour: 16 }, enrolled: 2 },
+      { id: 'swim1-wed', day: 'Wednesdays', time: '4:00–4:45 pm', ages: [4, 6], start: { day: 2, hour: 16 }, enrolled: 4, waitlist: 1 },
     ],
   },
   {
-    id: 'swim2', name: 'Swim Level 2', category: 'Aquatics', minAge: 6, maxAge: 8,
+    id: 'swim2', name: 'Swim Level 2', category: 'Aquatics',
     capacity: 6, capacityNote: '1 instructor per 6 swimmers',
     location: 'Northside Aquatic Center', price: 85, dates: 'Jan 6 – Feb 28',
     description: 'Front and back glides, rhythmic breathing, and swimming 5 yards on their own. Kids should be comfortable putting their face in the water.',
@@ -86,7 +84,7 @@ export const SEED_PROGRAMS: SeedProgram[] = [
     ],
   },
   {
-    id: 'art', name: 'Art Studio: Clay & Paint', category: 'Arts', minAge: 5, maxAge: 10,
+    id: 'art', name: 'Art Studio: Clay & Paint', category: 'Arts',
     capacity: 10, capacityNote: 'Limited by studio tables and kiln space',
     location: 'Oak Street Arts Studio', price: 95, dates: 'Jan 7 – Feb 28',
     description: 'Hand-building with clay, then glazing and painting what they made. All materials included. Wear clothes that can get messy.',
@@ -96,7 +94,7 @@ export const SEED_PROGRAMS: SeedProgram[] = [
     ],
   },
   {
-    id: 'bball', name: 'Youth Basketball Camp', category: 'Sports', minAge: 9, maxAge: 12,
+    id: 'bball', name: 'Youth Basketball Camp', category: 'Sports',
     capacity: 16, capacityNote: '2 coaches, 8 players each, one court', opensInMs: 3 * 60 * 1000,
     location: 'Central Rec Gym', price: 140, dates: 'Winter break, Mon–Fri',
     description: 'A week of dribbling, passing and small-sided games. Bring a water bottle and court shoes.',
@@ -106,11 +104,11 @@ export const SEED_PROGRAMS: SeedProgram[] = [
     ],
   },
   {
-    id: 'climb', name: 'Teen Climbing', category: 'Sports', minAge: 13, maxAge: 17,
+    id: 'climb', name: 'Teen Climbing', category: 'Sports',
     capacity: 6, capacityNote: '1 belay instructor per 3 climbers, 2 instructors', opensInDays: 14,
     location: 'Central Rec Climbing Wall', price: 110, dates: 'Jan 8 – Feb 26',
     description: 'Top-rope climbing with certified staff, plus knots and belay basics. Harness and shoes provided.',
-    sections: [{ id: 'climb-thu', day: 'Thursdays', time: '6:00–7:30 pm', start: { day: 3, hour: 18 }, enrolled: 0 }],
+    sections: [{ id: 'climb-thu', day: 'Thursdays', time: '6:00–7:30 pm', ages: [13, 17], start: { day: 3, hour: 18 }, enrolled: 0 }],
   },
 ];
 
@@ -140,16 +138,13 @@ export async function seed(pool: pg.Pool): Promise<void> {
         opensAt.setHours(9, 0, 0, 0);
       }
       await c.query(
-        `INSERT INTO programs (id, name, category, min_age, max_age, location, price_cents, dates_label, description,
+        `INSERT INTO programs (id, name, category, location, price_cents, dates_label, description,
                                capacity_note, registration_opens_at, sort_order)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
-        [p.id, p.name, p.category, p.minAge, p.maxAge, p.location, p.price * 100, p.dates, p.description,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [p.id, p.name, p.category, p.location, p.price * 100, p.dates, p.description,
           p.capacityNote, opensAt, pi],
       );
       for (const [si, s] of p.sections.entries()) {
-        if (s.ages && (s.ages[0] < p.minAge || s.ages[1] > p.maxAge)) {
-          throw new Error(`${s.id}: ages ${s.ages.join('–')} fall outside ${p.id}'s ${p.minAge}–${p.maxAge}`);
-        }
         await c.query(
           `INSERT INTO sections (id, program_id, day_label, time_label, capacity, starts_at, min_age, max_age, sort_order)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
