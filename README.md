@@ -148,9 +148,22 @@ How I worked with it:
 - **It built "accept, then pay at checkout" as two steps.** I changed it to charge at the moment of acceptance.
 - **It implemented the design's "held for another family" dots and countdowns.** I had them removed. It then also stopped the API from sending that data at all, so it can't be found by inspecting the page.
 - **"Can two families book the last seat?"** Its answer, that the database lock makes it safe, was correct but incomplete. I pointed out that the 24 losing families still *saw* an open seat and expected to get it. That user-experience gap is now first on the next-steps list.
-- **Testing it by hand in Codespaces, I found two bugs its tests had missed.** Age limits still lived on programs even though I'd asked for them per section, and a child registered for one day of a program couldn't add another day (a rule it had carried over from the design without asking). Both are fixed, with regression tests.
 - **Smaller corrections:**
   - Some of its own tests had wrong expectations, or failed now and then because they read the clock twice. It caught and fixed these itself.
+
+### Bugs I found testing it myself
+
+Every automated test was passing when I clicked through the site in Codespaces. These are what I still found:
+
+| What I hit | Cause | Fix |
+|---|---|---|
+| **The site wouldn't load in Codespaces** ("unable to handle this request") | Vite listened only on `localhost`, and port 5173 had to be forwarded as HTTP | It loaded once I re-forwarded 5173 as HTTP in the Ports tab. The dev container now binds Vite to all addresses, keeps it on a fixed port, and waits for Postgres before seeding |
+| **Programs still had age limits.** I'd asked for ages per section; cards still said "Ages 3–5" | It kept a program-level range that sections fell back to. Its first fix still showed a program "summary" age, and it passed every test | Ages now live only on sections (migration `006`), and a section can be open to all ages. No program shows an age |
+| **"Maya is already registered"** when adding her to Swim 2 Thursdays, with a seat open | A one-section-per-program rule it carried over from the design without asking | The rule is now per section: never the same section twice, any other day is fine. API and browser regression tests |
+| **Hard to find classes Maya and Leo could take together** | Only two sections fit both kids, and each had one seat left | Pick several kids on the browse page to see programs that take them together; sections they all fit are tagged "Maya & Leo can both join"; the demo data has more all-ages sections |
+
+**What this taught me:** the AI's tests checked what it had built, not what I meant. A fix can pass every test and still
+miss the point, as the first age fix did. Clicking through the real site myself caught that.
 
 ### Asking the AI to break it
 
