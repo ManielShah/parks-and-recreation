@@ -2,10 +2,55 @@
 
 /** How long a spot added to the cart is held before it is released. */
 export const HOLD_MS = 5 * 60 * 1000;
-/** How long a family has to accept a spot offered from the waitlist. */
-export const OFFER_MS = 2 * 60 * 60 * 1000;
+const MINUTE = 60 * 1000;
+const HOUR = 60 * MINUTE;
+
+/** Longest a family ever has to accept a waitlist offer (when the class is more than a day away). */
+export const OFFER_MS = 2 * HOUR;
+/** No automatic waitlist offer may be made, or still be open, after this long before class starts. */
+export const AUTO_PROMOTION_CUTOFF_MS = 10 * MINUTE;
 /** Most spots one family can hold in its cart at once. */
 export const CART_MAX = 3;
+
+/**
+ * How long a family gets to accept a waitlist offer, given how long until the class starts.
+ * Shorter windows close to class time keep seats from sitting empty. Returns null under
+ * 20 minutes: spots are then assigned by staff instead of offered automatically.
+ *
+ * | Time until class starts | Window  |
+ * | ----------------------- | ------- |
+ * | more than 24 hours      | 2 hours |
+ * | 2–24 hours              | 30 min  |
+ * | 20 min–2 hours          | 10 min  |
+ * | under 20 minutes        | staff   |
+ */
+export function offerWindowMs(msUntilStart: number): number | null {
+  if (msUntilStart > 24 * HOUR) return 2 * HOUR;
+  if (msUntilStart >= 2 * HOUR) return 30 * MINUTE;
+  if (msUntilStart >= 20 * MINUTE) return 10 * MINUTE;
+  return null;
+}
+
+/**
+ * When an automatic offer made now would expire, or null if automatic offers have stopped.
+ * The window never runs past the cutoff 10 minutes before class, whatever the table says.
+ */
+export function autoOfferExpiry(startsAt: number, now: number): number | null {
+  const window = offerWindowMs(startsAt - now);
+  const cutoff = startsAt - AUTO_PROMOTION_CUTOFF_MS;
+  if (window === null || now >= cutoff) return null;
+  return Math.min(now + window, cutoff);
+}
+
+/** "2 hours", "30 minutes", "1 minute". */
+export function formatDuration(ms: number): string {
+  const minutes = Math.max(1, Math.round(ms / MINUTE));
+  if (minutes % 60 === 0) {
+    const hours = minutes / 60;
+    return hours === 1 ? '1 hour' : `${hours} hours`;
+  }
+  return minutes === 1 ? '1 minute' : `${minutes} minutes`;
+}
 
 export const CATEGORIES = ['Aquatics', 'Arts', 'Sports', 'Gymnastics'] as const;
 export type Category = (typeof CATEGORIES)[number];
@@ -22,6 +67,8 @@ export interface Section {
   day: string;
   time: string;
   capacity: number;
+  /** First class (epoch ms). Offer windows and automatic offers depend on it. */
+  startsAt: number;
 }
 
 export interface Program {
@@ -71,6 +118,11 @@ export interface WaitlistEntry {
   childId: string;
   /** 1-based place in line. */
   position: number;
+  /**
+   * Set while staff have opened a "last call" on this section with a spot free:
+   * any family on the waitlist can claim it until then, first come first served.
+   */
+  claimableUntil: number | null;
 }
 
 export interface SectionLive {
@@ -134,7 +186,45 @@ export type ErrorCode =
   | 'spots_open'
   | 'expired'
   | 'cart_changed'
-  | 'not_open';
+  | 'not_open'
+  | 'waitlist_priority'
+  | 'forbidden';
+
+/** Staff view of one section: everything needed to run its waitlist by hand near class start. */
+export interface StaffSection {
+  sectionId: string;
+  programName: string;
+  day: string;
+  time: string;
+  startsAt: number;
+  capacity: number;
+  registered: number;
+  inCarts: number;
+  offers: { familyName: string; childName: string | null; expiresAt: number }[];
+  waitlist: { position: number; familyName: string; childName: string | null }[];
+  lastCallUntil: number | null;
+}
+
+export type WaitlistEventName = 'joined' | 'left' | 'offered' | 'accepted' | 'declined' | 'expired' | 'last_call' | 'claimed';
+
+export interface WaitlistEvent {
+  id: string;
+  at: number;
+  sectionId: string;
+  sectionLabel: string;
+  event: WaitlistEventName;
+  actor: 'family' | 'system' | 'staff';
+  familyName: string | null;
+  childName: string | null;
+  offerExpiresAt: number | null;
+  detail: string | null;
+}
+
+export interface StaffOverviewResponse {
+  serverNow: number;
+  sections: StaffSection[];
+  events: WaitlistEvent[];
+}
 
 export interface ApiError {
   error: { code: ErrorCode; message: string };

@@ -11,6 +11,7 @@ import { Checkout } from './screens/Checkout';
 import { Confirmation } from './screens/Confirmation';
 import { MyRegistrations } from './screens/MyRegistrations';
 import { ProgramDetail } from './screens/ProgramDetail';
+import { Staff } from './screens/Staff';
 import styles from './App.module.css';
 
 export function App() {
@@ -35,6 +36,7 @@ export function App() {
             <Route path="/checkout" element={<Checkout model={model} />} />
             <Route path="/checkout/done" element={<Confirmation model={model} />} />
             <Route path="/account" element={<MyRegistrations model={model} />} />
+            <Route path="/staff" element={<Staff />} />
             <Route path="*" element={<div className="page"><h1>Page not found</h1></div>} />
           </Routes>
         )}

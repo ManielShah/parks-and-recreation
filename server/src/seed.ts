@@ -10,6 +10,8 @@ interface SeedSection {
   id: string;
   day: string;
   time: string;
+  /** First class: days after the session's first Monday, and local start time. */
+  start: { day: number; hour: number; minute?: number };
   enrolled: number;
   waitlist?: number;
 }
@@ -35,6 +37,20 @@ interface SeedProgram {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
+/** First Monday on or after January 4 of next year: the start of the next winter session. */
+function nextWinterMonday(now: Date): Date {
+  const d = new Date(now.getFullYear() + 1, 0, 4);
+  while (d.getDay() !== 1) d.setDate(d.getDate() + 1);
+  return d;
+}
+
+function firstClass(sessionStart: Date, start: SeedSection['start']): Date {
+  const d = new Date(sessionStart);
+  d.setDate(d.getDate() + start.day);
+  d.setHours(start.hour, start.minute ?? 0, 0, 0);
+  return d;
+}
+
 export const SEED_PROGRAMS: SeedProgram[] = [
   {
     id: 'tots', name: 'Tiny Tumblers', category: 'Gymnastics', minAge: 3, maxAge: 5,
@@ -42,8 +58,8 @@ export const SEED_PROGRAMS: SeedProgram[] = [
     location: 'Central Rec Gym', price: 70, dates: 'Jan 9 – Feb 27',
     description: 'Rolls, balance beams and soft landings for preschoolers. A parent or caregiver stays on deck for the first two classes.',
     sections: [
-      { id: 'tots-fri', day: 'Fridays', time: '10:00–10:45 am', enrolled: 5 },
-      { id: 'tots-sat', day: 'Saturdays', time: '9:00–9:45 am', enrolled: 4 },
+      { id: 'tots-fri', day: 'Fridays', time: '10:00–10:45 am', start: { day: 4, hour: 10 }, enrolled: 5 },
+      { id: 'tots-sat', day: 'Saturdays', time: '9:00–9:45 am', start: { day: 5, hour: 9 }, enrolled: 4 },
     ],
   },
   {
@@ -52,8 +68,8 @@ export const SEED_PROGRAMS: SeedProgram[] = [
     location: 'Northside Aquatic Center', price: 85, dates: 'Jan 5 – Feb 23',
     description: 'Water comfort, floating and kicking with support. For kids who are new to lessons.',
     sections: [
-      { id: 'swim1-mon', day: 'Mondays', time: '4:00–4:45 pm', enrolled: 2 },
-      { id: 'swim1-wed', day: 'Wednesdays', time: '4:00–4:45 pm', enrolled: 4, waitlist: 1 },
+      { id: 'swim1-mon', day: 'Mondays', time: '4:00–4:45 pm', start: { day: 0, hour: 16 }, enrolled: 2 },
+      { id: 'swim1-wed', day: 'Wednesdays', time: '4:00–4:45 pm', start: { day: 2, hour: 16 }, enrolled: 4, waitlist: 1 },
     ],
   },
   {
@@ -62,9 +78,9 @@ export const SEED_PROGRAMS: SeedProgram[] = [
     location: 'Northside Aquatic Center', price: 85, dates: 'Jan 6 – Feb 28',
     description: 'Front and back glides, rhythmic breathing, and swimming 5 yards on their own. Kids should be comfortable putting their face in the water.',
     sections: [
-      { id: 'swim2-tue', day: 'Tuesdays', time: '4:00–5:00 pm', enrolled: 3 },
-      { id: 'swim2-thu', day: 'Thursdays', time: '4:00–5:00 pm', enrolled: 5 },
-      { id: 'swim2-sat', day: 'Saturdays', time: '10:00–11:00 am', enrolled: 6, waitlist: 2 },
+      { id: 'swim2-tue', day: 'Tuesdays', time: '4:00–5:00 pm', start: { day: 1, hour: 16 }, enrolled: 3 },
+      { id: 'swim2-thu', day: 'Thursdays', time: '4:00–5:00 pm', start: { day: 3, hour: 16 }, enrolled: 5 },
+      { id: 'swim2-sat', day: 'Saturdays', time: '10:00–11:00 am', start: { day: 5, hour: 10 }, enrolled: 6, waitlist: 2 },
     ],
   },
   {
@@ -73,8 +89,8 @@ export const SEED_PROGRAMS: SeedProgram[] = [
     location: 'Oak Street Arts Studio', price: 95, dates: 'Jan 7 – Feb 28',
     description: 'Hand-building with clay, then glazing and painting what they made. All materials included. Wear clothes that can get messy.',
     sections: [
-      { id: 'art-wed', day: 'Wednesdays', time: '3:30–5:00 pm', enrolled: 3 },
-      { id: 'art-sat', day: 'Saturdays', time: '1:00–2:30 pm', enrolled: 9 },
+      { id: 'art-wed', day: 'Wednesdays', time: '3:30–5:00 pm', start: { day: 2, hour: 15, minute: 30 }, enrolled: 3 },
+      { id: 'art-sat', day: 'Saturdays', time: '1:00–2:30 pm', start: { day: 5, hour: 13 }, enrolled: 9 },
     ],
   },
   {
@@ -83,8 +99,8 @@ export const SEED_PROGRAMS: SeedProgram[] = [
     location: 'Central Rec Gym', price: 140, dates: 'Winter break, Mon–Fri',
     description: 'A week of dribbling, passing and small-sided games. Bring a water bottle and court shoes.',
     sections: [
-      { id: 'bball-w1', day: 'Jan 5–9', time: 'Mon–Fri, 9 am–12 pm', enrolled: 0 },
-      { id: 'bball-w2', day: 'Jan 12–16', time: 'Mon–Fri, 9 am–12 pm', enrolled: 0 },
+      { id: 'bball-w1', day: 'Jan 5–9', time: 'Mon–Fri, 9 am–12 pm', start: { day: 0, hour: 9 }, enrolled: 0 },
+      { id: 'bball-w2', day: 'Jan 12–16', time: 'Mon–Fri, 9 am–12 pm', start: { day: 7, hour: 9 }, enrolled: 0 },
     ],
   },
   {
@@ -92,7 +108,7 @@ export const SEED_PROGRAMS: SeedProgram[] = [
     capacity: 6, capacityNote: '1 belay instructor per 3 climbers, 2 instructors', opensInDays: 14,
     location: 'Central Rec Climbing Wall', price: 110, dates: 'Jan 8 – Feb 26',
     description: 'Top-rope climbing with certified staff, plus knots and belay basics. Harness and shoes provided.',
-    sections: [{ id: 'climb-thu', day: 'Thursdays', time: '6:00–7:30 pm', enrolled: 0 }],
+    sections: [{ id: 'climb-thu', day: 'Thursdays', time: '6:00–7:30 pm', start: { day: 3, hour: 18 }, enrolled: 0 }],
   },
 ];
 
@@ -113,6 +129,7 @@ export async function seed(pool: pg.Pool): Promise<void> {
     );
 
     const now = clock.now().getTime();
+    const sessionStart = nextWinterMonday(clock.now());
     for (const [pi, p] of SEED_PROGRAMS.entries()) {
       let opensAt: Date | null = null;
       if (p.opensInMs) opensAt = new Date(now + p.opensInMs);
@@ -129,8 +146,9 @@ export async function seed(pool: pg.Pool): Promise<void> {
       );
       for (const [si, s] of p.sections.entries()) {
         await c.query(
-          `INSERT INTO sections (id, program_id, day_label, time_label, capacity, sort_order) VALUES ($1, $2, $3, $4, $5, $6)`,
-          [s.id, p.id, s.day, s.time, p.capacity, si],
+          `INSERT INTO sections (id, program_id, day_label, time_label, capacity, starts_at, sort_order)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [s.id, p.id, s.day, s.time, p.capacity, firstClass(sessionStart, s.start), si],
         );
         for (let i = 0; i < s.enrolled; i++) {
           await c.query(

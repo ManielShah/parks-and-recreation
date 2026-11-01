@@ -1,4 +1,4 @@
-import { CART_MAX, isAgeEligible, isRegistrationOpen, type Hold, type Kid, type Program, type Section, type SectionLive, type StateResponse, type Tone } from '@parks/shared';
+import { CART_MAX, autoOfferExpiry, formatDuration, isAgeEligible, isRegistrationOpen, type Hold, type Kid, type Program, type Section, type SectionLive, type StateResponse, type Tone } from '@parks/shared';
 import { countdown, money, plural, when } from './format';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -38,6 +38,19 @@ export function sectionName(m: Model, sectionId: string): string {
 }
 
 export const openSpots = (l: SectionLive) => l.capacity - l.taken - l.holds.length;
+
+/** Seats a family not on the waitlist can add to a cart: none while anyone is waiting for one. */
+export const walkInSpots = (l: SectionLive) => (l.waitlistLength > 0 ? 0 : Math.max(0, openSpots(l)));
+
+/**
+ * How long a family would get to accept if a spot opened in this section right now:
+ * "2 hours", "30 minutes", "10 minutes", or null when staff assign spots (close to class).
+ */
+export function offerWindowNow(m: Model, sectionId: string): string | null {
+  const { section } = m.section(sectionId);
+  const expiry = autoOfferExpiry(section.startsAt, m.now);
+  return expiry === null ? null : formatDuration(expiry - m.now);
+}
 
 export interface MyHold extends Hold {
   sectionId: string;
@@ -96,7 +109,7 @@ export function opening(m: Model, program: Program): Opening {
 export function programAvailability(m: Model, program: Program): { label: string; tone: 'good' | 'warn' | 'info' | 'muted' } {
   const o = opening(m, program);
   if (!o.open) return { label: o.cardLabel, tone: 'info' };
-  const open = program.sections.reduce((n, s) => n + Math.max(0, openSpots(m.live(s.id))), 0);
+  const open = program.sections.reduce((n, s) => n + walkInSpots(m.live(s.id)), 0);
   if (open === 0) return { label: 'Waitlist only', tone: 'muted' };
   if (open === 1) return { label: 'Only 1 spot left', tone: 'warn' };
   return { label: `${open} spots open`, tone: 'good' };
@@ -109,6 +122,7 @@ export type SectionAction =
   | { type: 'add'; label: string }
   | { type: 'waitlist'; label: string }
   | { type: 'accept'; label: string; holdId: string }
+  | { type: 'claim'; label: string; entryId: string }
   | { type: 'checkout'; label: string }
   | { type: 'leave'; label: string; entryId: string }
   | { type: 'account'; label: string }
@@ -118,6 +132,8 @@ export interface SectionView {
   id: string;
   day: string;
   time: string;
+  /** "Mon, Jan 4, 4:00 PM" */
+  firstClass: string;
   dots: DotKind[];
   capacityLabel: string;
   note: string;
@@ -136,7 +152,8 @@ export function sectionView(m: Model, program: Program, section: Section, kid: K
   const now = m.now;
   const mine = l.holds.filter((h) => h.kind === 'cart');
   const myOffer = l.holds.find((h) => h.kind === 'offer') ?? null;
-  const open = openSpots(l);
+  const open = walkInSpots(l);
+  const reservedForWaitlist = l.waitlistLength > 0 && openSpots(l) > 0;
   const myRegs = m.state.registrations.filter((r) => r.sectionId === section.id);
   const myWait = m.state.waitlist.find((w) => w.sectionId === section.id) ?? null;
   const cartFull = myHolds(m, 'cart').length >= CART_MAX;
@@ -153,7 +170,8 @@ export function sectionView(m: Model, program: Program, section: Section, kid: K
   if (myRegs.length) household.push(`${myRegs.map((r) => kidName(m, r.childId)).join(' & ')} registered`);
   if (myOffer) household.push(`Spot offered to ${kidName(m, myOffer.childId)} · accept within ${countdown(myOffer.expiresAt - now)}`);
   if (mine.length) household.push(`${mine.map((h) => kidName(m, h.childId)).join(' & ')} in your cart · ${countdown(mine[0]!.expiresAt - now)} left`);
-  if (myWait) household.push(`${kidName(m, myWait.childId)} is #${myWait.position} on the waitlist`);
+  if (myWait?.claimableUntil) household.push(`Last call for ${kidName(m, myWait.childId)} · claim within ${countdown(myWait.claimableUntil - now)}`);
+  else if (myWait) household.push(`${kidName(m, myWait.childId)} is #${myWait.position} on the waitlist`);
   const hh = household.join(' · ');
   const pre = hh ? `${hh} · ` : '';
   const needKid = !kid || !kidOk;
@@ -170,6 +188,7 @@ export function sectionView(m: Model, program: Program, section: Section, kid: K
   } else if (needKid && household.length) {
     note = hh;
     if (myOffer) { tone = 'good'; action = { type: 'accept', label: `Accept and pay ${money(program.priceCents)}`, holdId: myOffer.id }; }
+    else if (myWait?.claimableUntil) { tone = 'good'; action = { type: 'claim', label: `Claim and pay ${money(program.priceCents)}`, entryId: myWait.id }; }
     else if (mine.length) { tone = 'info'; action = { type: 'checkout', label: 'Go to checkout' }; }
     else if (myWait && !myRegs.length) { tone = 'info'; secondary = true; action = { type: 'leave', label: 'Leave waitlist', entryId: myWait.id }; }
     else { tone = 'good'; secondary = true; action = { type: 'account', label: 'View registrations' }; }
@@ -180,7 +199,9 @@ export function sectionView(m: Model, program: Program, section: Section, kid: K
     else if (cartFull) action = { type: 'disabled', label: 'Cart is full' };
     else action = { type: 'add', label: `Add ${kid!.name} to cart` };
   } else {
-    note = `${pre}Full · ${l.waitlistLength} ${plural(l.waitlistLength, 'family', 'families')} on the waitlist`;
+    note = reservedForWaitlist
+      ? `${pre}Open seat reserved for the waitlist · ${l.waitlistLength} ${plural(l.waitlistLength, 'family', 'families')} in line`
+      : `${pre}Full · ${l.waitlistLength} ${plural(l.waitlistLength, 'family', 'families')} on the waitlist`;
     tone = hh ? 'info' : 'muted';
     action = needKid ? { type: 'disabled', label: 'Join waitlist' } : { type: 'waitlist', label: `Waitlist ${kid!.name}` };
   }
@@ -189,6 +210,7 @@ export function sectionView(m: Model, program: Program, section: Section, kid: K
     id: section.id,
     day: section.day,
     time: section.time,
+    firstClass: when(section.startsAt),
     dots,
     capacityLabel: `${l.taken - mineReg} taken, ${dots.filter((d) => d === 'mine').length} yours, ${Math.max(open, 0)} open, out of ${l.capacity} spots`,
     note,

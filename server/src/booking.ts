@@ -1,4 +1,7 @@
-import { CART_MAX, HOLD_MS, OFFER_MS, isAgeEligible, type ErrorCode, type Hold, type Registration, type Tone, type WaitlistEntry } from '@parks/shared';
+import {
+  CART_MAX, HOLD_MS, autoOfferExpiry, formatDuration, isAgeEligible,
+  type ErrorCode, type Hold, type Registration, type Tone, type WaitlistEntry,
+} from '@parks/shared';
 import { pool, tx, type Db } from './db.js';
 
 export class BookingError extends Error {
@@ -23,19 +26,68 @@ interface SectionRow {
   price_cents: number;
   label: string;
   registration_opens_at: Date | null;
+  starts_at: Date;
+  last_call_until: Date | null;
 }
 
+const SECTION_SELECT = `
+  SELECT s.id, s.capacity, s.program_id, s.starts_at, s.last_call_until,
+         p.min_age, p.max_age, p.price_cents, p.registration_opens_at,
+         p.name || ' · ' || s.day_label AS label
+    FROM sections s JOIN programs p ON p.id = s.program_id
+   WHERE s.id = $1`;
+
 async function lockSection(c: Db, sectionId: string): Promise<SectionRow> {
-  const { rows } = await c.query<SectionRow>(
-    `SELECT s.id, s.capacity, s.program_id, p.min_age, p.max_age, p.price_cents, p.registration_opens_at,
-            p.name || ' · ' || s.day_label AS label
-       FROM sections s JOIN programs p ON p.id = s.program_id
-      WHERE s.id = $1
-        FOR UPDATE OF s`,
-    [sectionId],
-  );
+  const { rows } = await c.query<SectionRow>(`${SECTION_SELECT} FOR UPDATE OF s`, [sectionId]);
   if (!rows[0]) throw new BookingError('not_found', 'That section does not exist.', 404);
   return rows[0];
+}
+
+/**
+ * Run a booking change in a transaction. Unlike plain tx, a request that fails a check
+ * (a BookingError) still commits the settling it did first: settleSection ends with
+ * SAVEPOINT settled, and we roll back only to there. Before this, a failed request rolled
+ * back everything, so an expired offer it had just passed to the next family was un-passed
+ * and the spot sat idle until the sweeper's next pass.
+ */
+async function bookingTx<T>(fn: (c: Db) => Promise<T>): Promise<T> {
+  const c = await pool.connect();
+  try {
+    await c.query('BEGIN');
+    const out = await fn(c);
+    await c.query('COMMIT');
+    return out;
+  } catch (err) {
+    if (!(err instanceof BookingError) || !(await keepSettled(c))) await c.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    c.release();
+  }
+}
+
+async function keepSettled(c: Db): Promise<boolean> {
+  try {
+    await c.query('ROLLBACK TO SAVEPOINT settled');
+    await c.query('COMMIT');
+    return true;
+  } catch {
+    // No section was settled yet (or the commit failed): fall back to a full rollback.
+    return false;
+  }
+}
+
+type EventName = 'joined' | 'left' | 'offered' | 'accepted' | 'declined' | 'expired' | 'last_call' | 'claimed';
+
+/** Append to the waitlist audit trail, in the same transaction as the change it describes. */
+async function record(
+  c: Db, now: Date, sectionId: string, event: EventName, actor: 'family' | 'system' | 'staff',
+  who: { family_id?: string | null; child_id?: string | null } = {}, extra: { offerExpiresAt?: Date; detail?: string } = {},
+): Promise<void> {
+  await c.query(
+    `INSERT INTO waitlist_events (section_id, family_id, child_id, event, actor, offer_expires_at, detail, created_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [sectionId, who.family_id ?? null, who.child_id ?? null, event, actor, extra.offerExpiresAt ?? null, extra.detail ?? null, now],
+  );
 }
 
 async function lockFamily(c: Db, familyId: string): Promise<void> {
@@ -84,29 +136,52 @@ async function openSpots(c: Db, s: SectionRow, now: Date): Promise<number> {
   return s.capacity - Number(rows[0]!.taken);
 }
 
+async function waitlistLength(c: Db, sectionId: string): Promise<number> {
+  const { rows } = await c.query<{ n: string }>('SELECT count(*) AS n FROM waitlist_entries WHERE section_id = $1', [sectionId]);
+  return Number(rows[0]!.n);
+}
+
+/** Take the first family in line (strict FIFO by entry id). Caller holds the section lock. */
+async function popWaitlist(c: Db, sectionId: string): Promise<{ family_id: string; child_id: string | null } | null> {
+  const { rows } = await c.query<{ family_id: string; child_id: string | null }>(
+    `DELETE FROM waitlist_entries
+      WHERE id = (SELECT id FROM waitlist_entries WHERE section_id = $1 ORDER BY id LIMIT 1)
+      RETURNING family_id, child_id`,
+    [sectionId],
+  );
+  return rows[0] ?? null;
+}
+
+/** Reserve a spot for one family and tell them how long they have. Nothing is charged until they accept. */
+async function makeOffer(
+  c: Db, s: SectionRow, to: { family_id: string; child_id: string | null }, expiresAt: Date, actor: 'system' | 'staff', now: Date,
+): Promise<void> {
+  await c.query(
+    `INSERT INTO holds (section_id, family_id, child_id, kind, expires_at) VALUES ($1, $2, $3, 'offer', $4)`,
+    [s.id, to.family_id, to.child_id, expiresAt],
+  );
+  await notify(
+    c, to.family_id, 'good',
+    `Text and email sent: a spot opened for ${await childName(c, to.child_id)} in ${s.label}. You have ${formatDuration(expiresAt.getTime() - now.getTime())} to accept it. Your card is charged ${dollars(s.price_cents)} only if you accept.`,
+    true,
+  );
+  await record(c, now, s.id, 'offered', actor, to, { offerExpiresAt: expiresAt });
+}
+
 /**
- * Offer every open spot to the head of the waitlist, one family at a time, for 2 hours.
- * Nothing is charged here: a family is charged only if they accept. Caller holds the section lock.
+ * Offer every open spot to the head of the waitlist, one family at a time. The window
+ * depends on how soon class starts (see offerWindowMs). Under 20 minutes out, or during a
+ * staff last call, nothing is offered automatically: staff assign the spot instead.
+ * Caller holds the section lock.
  */
 async function promoteWaitlist(c: Db, s: SectionRow, now: Date): Promise<void> {
+  if (s.last_call_until && now < s.last_call_until) return;
+  const expiry = autoOfferExpiry(s.starts_at.getTime(), now.getTime());
+  if (expiry === null) return;
   while ((await openSpots(c, s, now)) > 0) {
-    const { rows } = await c.query<{ family_id: string; child_id: string | null }>(
-      `DELETE FROM waitlist_entries
-        WHERE id = (SELECT id FROM waitlist_entries WHERE section_id = $1 ORDER BY id LIMIT 1)
-        RETURNING family_id, child_id`,
-      [s.id],
-    );
-    const next = rows[0];
+    const next = await popWaitlist(c, s.id);
     if (!next) return;
-    await c.query(
-      `INSERT INTO holds (section_id, family_id, child_id, kind, expires_at) VALUES ($1, $2, $3, 'offer', $4)`,
-      [s.id, next.family_id, next.child_id, new Date(now.getTime() + OFFER_MS)],
-    );
-    await notify(
-      c, next.family_id, 'good',
-      `Text and email sent: a spot opened for ${await childName(c, next.child_id)} in ${s.label}. You have 2 hours to accept it. Your card is charged ${dollars(s.price_cents)} only if you accept.`,
-      true,
-    );
+    await makeOffer(c, s, next, new Date(expiry), 'system', now);
   }
 }
 
@@ -116,21 +191,24 @@ async function promoteWaitlist(c: Db, s: SectionRow, now: Date): Promise<void> {
  * so a spot is never handed to a new cart while someone is still waiting for it.
  */
 async function settleSection(c: Db, s: SectionRow, now: Date): Promise<void> {
-  const { rows: expired } = await c.query<{ family_id: string; child_id: string | null; kind: string }>(
-    'DELETE FROM holds WHERE section_id = $1 AND expires_at <= $2 RETURNING family_id, child_id, kind',
+  const { rows: expired } = await c.query<{ family_id: string; child_id: string | null; kind: string; expires_at: Date }>(
+    'DELETE FROM holds WHERE section_id = $1 AND expires_at <= $2 RETURNING family_id, child_id, kind, expires_at',
     [s.id, now],
   );
   for (const h of expired) {
+    if (h.kind === 'offer') await record(c, now, s.id, 'expired', 'system', h, { offerExpiresAt: h.expires_at });
     if (!h.child_id) continue;
     const name = await childName(c, h.child_id);
     await notify(
       c, h.family_id, 'warn',
       h.kind === 'offer'
-        ? `Your waitlist offer for ${name} in ${s.label} expired after 2 hours, so it went to the next family in line.`
+        ? `Your waitlist offer for ${name} in ${s.label} expired, so the spot moved on to the next family in line.`
         : `Your 5-minute hold on ${s.label} for ${name} ran out, so the spot was released.`,
     );
   }
   await promoteWaitlist(c, s, now);
+  // Everything above stands even if the request that called us then fails a check (see bookingTx).
+  await c.query('SAVEPOINT settled');
 }
 
 function dollars(cents: number): string {
@@ -167,7 +245,7 @@ function toHold(r: { id: string; section_id: string; kind: 'cart' | 'offer'; chi
 const HOLD_COLUMNS = 'id, section_id, kind, child_id, expires_at';
 
 export async function addToCart(familyId: string, sectionId: string, childId: string, now: Date): Promise<{ hold: Hold; lastSpot: boolean }> {
-  return tx(async (c) => {
+  return bookingTx(async (c) => {
     await lockFamily(c, familyId);
     const child = await lockChild(c, familyId, childId);
     const s = await lockSection(c, sectionId);
@@ -187,6 +265,11 @@ export async function addToCart(familyId: string, sectionId: string, childId: st
 
     const open = await openSpots(c, s, now);
     if (open <= 0) throw new BookingError('section_full', 'That section just filled up. You can join the waitlist.');
+    // A spot can be open with families still waiting only when it's being assigned by staff
+    // close to class start. The waitlist keeps its priority: walk-ins can't take it.
+    if ((await waitlistLength(c, s.id)) > 0) {
+      throw new BookingError('waitlist_priority', 'Families on the waitlist get this spot first. You can join the waitlist.');
+    }
 
     const { rows } = await c.query(
       `INSERT INTO holds (section_id, family_id, child_id, kind, expires_at) VALUES ($1, $2, $3, 'cart', $4) RETURNING ${HOLD_COLUMNS}`,
@@ -197,7 +280,7 @@ export async function addToCart(familyId: string, sectionId: string, childId: st
 }
 
 export async function removeFromCart(familyId: string, holdId: string, now: Date): Promise<void> {
-  await tx(async (c) => {
+  await bookingTx(async (c) => {
     const s = await lockSection(c, await sectionIdOf(c, 'holds', holdId, familyId));
     await c.query(`DELETE FROM holds WHERE id = $1 AND family_id = $2 AND kind = 'cart'`, [holdId, familyId]);
     await settleSection(c, s, now);
@@ -205,7 +288,7 @@ export async function removeFromCart(familyId: string, holdId: string, now: Date
 }
 
 export async function joinWaitlist(familyId: string, sectionId: string, childId: string, now: Date): Promise<WaitlistEntry> {
-  return tx(async (c) => {
+  return bookingTx(async (c) => {
     const child = await lockChild(c, familyId, childId);
     const s = await lockSection(c, sectionId);
     await settleSection(c, s, now);
@@ -215,7 +298,7 @@ export async function joinWaitlist(familyId: string, sectionId: string, childId:
       throw new BookingError('not_eligible', `${child.name} is outside this program's age range.`);
     }
     await assertChildFree(c, child.id, s.program_id, now);
-    if ((await openSpots(c, s, now)) > 0) {
+    if ((await openSpots(c, s, now)) > 0 && (await waitlistLength(c, s.id)) === 0) {
       throw new BookingError('spots_open', 'A spot is open in this section. Add it to your cart instead.');
     }
 
@@ -227,14 +310,19 @@ export async function joinWaitlist(familyId: string, sectionId: string, childId:
       'SELECT count(*) AS n FROM waitlist_entries WHERE section_id = $1 AND id <= $2',
       [s.id, rows[0]!.id],
     );
-    return { id: String(rows[0]!.id), sectionId: s.id, childId: child.id, position: Number(pos[0]!.n) };
+    await record(c, now, s.id, 'joined', 'family', { family_id: familyId, child_id: child.id }, { detail: `#${pos[0]!.n} in line` });
+    return { id: String(rows[0]!.id), sectionId: s.id, childId: child.id, position: Number(pos[0]!.n), claimableUntil: null };
   });
 }
 
-export async function leaveWaitlist(familyId: string, entryId: string): Promise<void> {
-  await tx(async (c) => {
-    await lockSection(c, await sectionIdOf(c, 'waitlist_entries', entryId, familyId));
-    await c.query('DELETE FROM waitlist_entries WHERE id = $1 AND family_id = $2', [entryId, familyId]);
+export async function leaveWaitlist(familyId: string, entryId: string, now: Date): Promise<void> {
+  await bookingTx(async (c) => {
+    const s = await lockSection(c, await sectionIdOf(c, 'waitlist_entries', entryId, familyId));
+    const { rows } = await c.query<{ family_id: string; child_id: string | null }>(
+      'DELETE FROM waitlist_entries WHERE id = $1 AND family_id = $2 RETURNING family_id, child_id',
+      [entryId, familyId],
+    );
+    if (rows[0]) await record(c, now, s.id, 'left', 'family', rows[0]);
   });
 }
 
@@ -274,37 +362,48 @@ export async function sendOpeningReminders(now: Date): Promise<number> {
  * This is the only point a waitlisted family is charged; an offer left to expire costs nothing.
  */
 export async function acceptOffer(familyId: string, holdId: string, now: Date): Promise<{ registrations: Registration[]; totalCents: number }> {
-  return tx(async (c) => {
+  return bookingTx(async (c) => {
     await lockFamily(c, familyId);
     const s = await lockSection(c, await sectionIdOf(c, 'holds', holdId, familyId));
+    // Settling first releases this offer if it has run out and hands the spot on; that
+    // survives the 'expired' error below.
+    await settleSection(c, s, now);
     const { rows } = await c.query<{ child_id: string | null }>(
-      `DELETE FROM holds WHERE id = $1 AND family_id = $2 AND kind = 'offer' AND expires_at > $3 RETURNING child_id`,
-      [holdId, familyId, now],
+      `DELETE FROM holds WHERE id = $1 AND family_id = $2 AND kind = 'offer' RETURNING child_id`,
+      [holdId, familyId],
     );
-    if (!rows[0]) {
-      await settleSection(c, s, now);
-      throw new BookingError('expired', 'This offer has expired and went to the next family in line.');
-    }
-    // Payment is simulated: charge the saved card here, and throw (rolling back) if it's declined.
-    const { rows: reg } = await c.query<{ id: string; confirmation: string }>(
-      `INSERT INTO registrations (section_id, family_id, child_id, confirmation, price_cents, from_waitlist, created_at)
-       VALUES ($1, $2, $3, 'CV-' || nextval('confirmation_seq'), $4, true, $5) RETURNING id, confirmation`,
-      [s.id, familyId, rows[0].child_id, s.price_cents, now],
-    );
+    if (!rows[0]) throw new BookingError('expired', 'This offer has expired and went to the next family in line.');
+    const reg = await registerFromWaitlist(c, s, familyId, rows[0].child_id, now);
+    await record(c, now, s.id, 'accepted', 'family', { family_id: familyId, child_id: rows[0].child_id });
     return {
-      registrations: [{
-        id: String(reg[0]!.id), sectionId: s.id, childId: rows[0].child_id ?? '', confirmation: reg[0]!.confirmation,
-        priceCents: s.price_cents, fromWaitlist: true,
-      }],
+      registrations: [reg],
       totalCents: s.price_cents,
     };
   });
 }
 
+/** Register a waitlisted family's child and charge them. Payment is simulated; a real charge goes here. */
+async function registerFromWaitlist(c: Db, s: SectionRow, familyId: string, childId: string | null, now: Date): Promise<Registration> {
+  // A declined card should throw here, rolling the whole acceptance back.
+  const { rows } = await c.query<{ id: string; confirmation: string }>(
+    `INSERT INTO registrations (section_id, family_id, child_id, confirmation, price_cents, from_waitlist, created_at)
+     VALUES ($1, $2, $3, 'CV-' || nextval('confirmation_seq'), $4, true, $5) RETURNING id, confirmation`,
+    [s.id, familyId, childId, s.price_cents, now],
+  );
+  return {
+    id: String(rows[0]!.id), sectionId: s.id, childId: childId ?? '', confirmation: rows[0]!.confirmation,
+    priceCents: s.price_cents, fromWaitlist: true,
+  };
+}
+
 export async function declineOffer(familyId: string, holdId: string, now: Date): Promise<void> {
-  await tx(async (c) => {
+  await bookingTx(async (c) => {
     const s = await lockSection(c, await sectionIdOf(c, 'holds', holdId, familyId));
-    await c.query(`DELETE FROM holds WHERE id = $1 AND family_id = $2 AND kind = 'offer'`, [holdId, familyId]);
+    const { rows } = await c.query<{ family_id: string; child_id: string | null }>(
+      `DELETE FROM holds WHERE id = $1 AND family_id = $2 AND kind = 'offer' AND expires_at > $3 RETURNING family_id, child_id`,
+      [holdId, familyId, now],
+    );
+    if (rows[0]) await record(c, now, s.id, 'declined', 'family', rows[0]);
     await settleSection(c, s, now);
   });
 }
@@ -314,7 +413,7 @@ export async function declineOffer(familyId: string, holdId: string, now: Date):
  * family, so nobody pays for a different set than they saw. Payment is simulated for now.
  */
 export async function checkout(familyId: string, holdIds: string[], now: Date): Promise<{ registrations: Registration[]; totalCents: number }> {
-  return tx(async (c) => {
+  return bookingTx(async (c) => {
     await lockFamily(c, familyId);
     const { rows: sectionRows } = await c.query<{ section_id: string }>(
       `SELECT DISTINCT section_id FROM holds WHERE family_id = $1 AND kind = 'cart' ORDER BY section_id`,
@@ -342,12 +441,13 @@ export async function checkout(familyId: string, holdIds: string[], now: Date): 
     let totalCents = 0;
     for (const h of holds) {
       const s = sections.get(h.section_id)!;
+      // Swap the hold for a registration. Payment is simulated; a real charge goes here.
+      await c.query('DELETE FROM holds WHERE id = $1', [h.id]);
       const { rows } = await c.query<{ id: string }>(
         `INSERT INTO registrations (section_id, family_id, child_id, confirmation, price_cents)
          VALUES ($1, $2, $3, 'CV-' || nextval('confirmation_seq'), $4) RETURNING id, confirmation`,
         [s.id, familyId, h.child_id, s.price_cents],
       );
-      await c.query('DELETE FROM holds WHERE id = $1', [h.id]);
       const r = rows[0] as unknown as { id: string; confirmation: string };
       registrations.push({
         id: String(r.id), sectionId: s.id, childId: h.child_id ?? '', confirmation: r.confirmation, priceCents: s.price_cents,
@@ -360,7 +460,7 @@ export async function checkout(familyId: string, holdIds: string[], now: Date): 
 }
 
 export async function withdraw(familyId: string, registrationId: string, now: Date): Promise<void> {
-  await tx(async (c) => {
+  await bookingTx(async (c) => {
     const s = await lockSection(c, await sectionIdOf(c, 'registrations', registrationId, familyId));
     const { rowCount } = await c.query(
       'UPDATE registrations SET withdrawn_at = $3 WHERE id = $1 AND family_id = $2 AND withdrawn_at IS NULL',
@@ -374,22 +474,86 @@ export async function withdraw(familyId: string, registrationId: string, now: Da
 /** Settle one section from outside a request (the sweeper). Skips sections a request is busy with. */
 export async function sweepSection(sectionId: string, now: Date): Promise<void> {
   await tx(async (c) => {
-    const { rows } = await c.query<SectionRow>(
-      `SELECT s.id, s.capacity, s.program_id, p.min_age, p.max_age, p.price_cents, p.registration_opens_at,
-              p.name || ' · ' || s.day_label AS label
-         FROM sections s JOIN programs p ON p.id = s.program_id
-        WHERE s.id = $1
-          FOR UPDATE OF s SKIP LOCKED`,
-      [sectionId],
-    );
+    const { rows } = await c.query<SectionRow>(`${SECTION_SELECT} FOR UPDATE OF s SKIP LOCKED`, [sectionId]);
     if (rows[0]) await settleSection(c, rows[0], now);
+  });
+}
+
+// --- Staff overrides: close to class start, when automatic offers have stopped ---
+
+const STAFF_MAX_WINDOW_MS = 2 * 60 * 60 * 1000;
+
+async function staffSection(c: Db, sectionId: string, now: Date): Promise<SectionRow> {
+  const s = await lockSection(c, sectionId);
+  await settleSection(c, s, now);
+  if ((await openSpots(c, s, now)) <= 0) throw new BookingError('section_full', 'There is no open spot in this section.');
+  if ((await waitlistLength(c, s.id)) === 0) throw new BookingError('invalid', 'Nobody is on the waitlist for this section.');
+  return s;
+}
+
+/** Offer the open spot to the next family in line, with a window staff choose. Works at any time, including the last 10 minutes. */
+export async function staffOffer(sectionId: string, windowMs: number, now: Date): Promise<void> {
+  if (windowMs <= 0 || windowMs > STAFF_MAX_WINDOW_MS) throw new BookingError('invalid', 'Choose a window of up to 2 hours.', 400);
+  await bookingTx(async (c) => {
+    const s = await staffSection(c, sectionId, now);
+    const next = (await popWaitlist(c, s.id))!;
+    await makeOffer(c, s, next, new Date(now.getTime() + windowMs), 'staff', now);
+  });
+}
+
+/**
+ * Last call: tell every family on the waitlist a spot is open; the first to claim it gets it.
+ * Trades strict line order for filling a seat that would otherwise go empty, so it's a staff
+ * decision, and only once automatic offers have stopped.
+ */
+export async function staffLastCall(sectionId: string, windowMs: number, now: Date): Promise<number> {
+  if (windowMs <= 0 || windowMs > STAFF_MAX_WINDOW_MS) throw new BookingError('invalid', 'Choose a window of up to 2 hours.', 400);
+  return bookingTx(async (c) => {
+    const s = await staffSection(c, sectionId, now);
+    if (autoOfferExpiry(s.starts_at.getTime(), now.getTime()) !== null) {
+      throw new BookingError('invalid', 'Automatic offers are still running for this section; the next family in line will be offered the spot.');
+    }
+    const until = new Date(now.getTime() + windowMs);
+    await c.query('UPDATE sections SET last_call_until = $2 WHERE id = $1', [s.id, until]);
+    const { rows: families } = await c.query<{ family_id: string }>(
+      'SELECT DISTINCT family_id FROM waitlist_entries WHERE section_id = $1',
+      [s.id],
+    );
+    for (const f of families) {
+      await notify(
+        c, f.family_id, 'good',
+        `Last call: a spot is open in ${s.label}. The first family on the waitlist to claim it gets it, within the next ${formatDuration(windowMs)}. Your card is charged ${dollars(s.price_cents)} only if you claim it.`,
+        true,
+      );
+    }
+    await record(c, now, s.id, 'last_call', 'staff', {}, { offerExpiresAt: until, detail: `${families.length} families notified` });
+    return families.length;
+  });
+}
+
+/** Claim an open spot during a last call. Concurrent claims queue on the section lock; the first wins. */
+export async function claimSpot(familyId: string, entryId: string, now: Date): Promise<{ registrations: Registration[]; totalCents: number }> {
+  return bookingTx(async (c) => {
+    await lockFamily(c, familyId);
+    const s = await lockSection(c, await sectionIdOf(c, 'waitlist_entries', entryId, familyId));
+    await settleSection(c, s, now);
+    if (!s.last_call_until || now >= s.last_call_until) throw new BookingError('expired', 'This last call has ended.');
+    if ((await openSpots(c, s, now)) <= 0) throw new BookingError('section_full', 'This spot has already been taken.');
+    const { rows } = await c.query<{ child_id: string | null }>(
+      'DELETE FROM waitlist_entries WHERE id = $1 AND family_id = $2 RETURNING child_id',
+      [entryId, familyId],
+    );
+    if (!rows[0]) throw new BookingError('not_found', 'You are no longer on this waitlist.', 404);
+    const reg = await registerFromWaitlist(c, s, familyId, rows[0].child_id, now);
+    await record(c, now, s.id, 'claimed', 'family', { family_id: familyId, child_id: rows[0].child_id });
+    return { registrations: [reg], totalCents: s.price_cents };
   });
 }
 
 // --- Simulated activity from other families (dev tools) ---
 
 export async function simulateDropout(sectionId: string, familyId: string, now: Date): Promise<boolean> {
-  return tx(async (c) => {
+  return bookingTx(async (c) => {
     const s = await lockSection(c, sectionId);
     const { rowCount } = await c.query(
       `UPDATE registrations SET withdrawn_at = $3
@@ -402,14 +566,23 @@ export async function simulateDropout(sectionId: string, familyId: string, now: 
 }
 
 export async function simulateCartHold(sectionId: string, familyId: string, now: Date): Promise<boolean> {
-  return tx(async (c) => {
+  return bookingTx(async (c) => {
     const s = await lockSection(c, sectionId);
     await settleSection(c, s, now);
-    if ((await openSpots(c, s, now)) <= 0) return false;
+    if ((await openSpots(c, s, now)) <= 0 || (await waitlistLength(c, s.id)) > 0) return false;
     await c.query(
       `INSERT INTO holds (section_id, family_id, kind, expires_at) VALUES ($1, $2, 'cart', $3)`,
       [sectionId, familyId, new Date(now.getTime() + HOLD_MS)],
     );
     return true;
+  });
+}
+
+/** Move a section's first class (dev tools), then re-run the waitlist under the new timing. */
+export async function setSectionStart(sectionId: string, startsAt: Date, now: Date): Promise<void> {
+  await bookingTx(async (c) => {
+    const s = await lockSection(c, sectionId);
+    await c.query('UPDATE sections SET starts_at = $2, last_call_until = NULL WHERE id = $1', [sectionId, startsAt]);
+    await settleSection(c, { ...s, starts_at: startsAt, last_call_until: null }, now);
   });
 }

@@ -7,6 +7,7 @@ import { clock } from './clock.js';
 import { config } from './config.js';
 import { pool } from './db.js';
 import { COMMUNITY_FAMILY, DEMO_FAMILY, seed } from './seed.js';
+import { getStaffOverview } from './staff.js';
 import { getCatalog, getState, markNoticesSeen } from './state.js';
 import { sweepOnce } from './sweeper.js';
 
@@ -19,6 +20,15 @@ const wrap = (fn: Handler) => (req: Request, res: Response, next: NextFunction) 
  */
 function familyOf(req: Request): string {
   return req.header('x-family-id') ?? DEMO_FAMILY;
+}
+
+/** Stand-in for staff sign-in: a shared token, or open in dev when no token is configured. */
+function requireStaff(req: Request, _res: Response, next: NextFunction): void {
+  if (config.staffToken && req.header('x-staff-token') !== config.staffToken) {
+    next(new BookingError('forbidden', 'Staff access only.', 403));
+    return;
+  }
+  next();
 }
 
 const sectionChild = z.object({ sectionId: z.string().min(1), childId: z.string().min(1) });
@@ -79,7 +89,7 @@ export function createApp() {
 
   app.delete('/api/waitlist/:id', wrap(async (req, res) => {
     const { id } = idParam.parse(req.params);
-    await booking.leaveWaitlist(familyOf(req), id);
+    await booking.leaveWaitlist(familyOf(req), id, clock.now());
     res.status(204).end();
   }));
 
@@ -94,14 +104,46 @@ export function createApp() {
     res.status(204).end();
   }));
 
+  app.post('/api/waitlist/:id/claim', wrap(async (req, res) => {
+    const { id } = idParam.parse(req.params);
+    res.status(201).json(await booking.claimSpot(familyOf(req), id, clock.now()));
+  }));
+
   app.post('/api/registrations/:id/withdraw', wrap(async (req, res) => {
     const { id } = idParam.parse(req.params);
     await booking.withdraw(familyOf(req), id, clock.now());
     res.status(204).end();
   }));
 
+  if (config.staffToken || config.devTools) {
+    const windowBody = z.object({ minutes: z.number().int().min(1).max(120) });
+    const sectionParam = z.object({ id: z.string().min(1) });
+
+    app.get('/api/staff/overview', requireStaff, wrap(async (_req, res) => res.json(await getStaffOverview())));
+
+    app.post('/api/staff/sections/:id/offer', requireStaff, wrap(async (req, res) => {
+      const { id } = sectionParam.parse(req.params);
+      const { minutes } = windowBody.parse(req.body);
+      await booking.staffOffer(id, minutes * 60_000, clock.now());
+      res.status(204).end();
+    }));
+
+    app.post('/api/staff/sections/:id/last-call', requireStaff, wrap(async (req, res) => {
+      const { id } = sectionParam.parse(req.params);
+      const { minutes } = windowBody.parse(req.body);
+      res.json({ notified: await booking.staffLastCall(id, minutes * 60_000, clock.now()) });
+    }));
+  }
+
   if (config.devTools) {
     const sectionBody = z.object({ sectionId: z.string().min(1) });
+
+    app.post('/api/dev/section-start', wrap(async (req, res) => {
+      const { sectionId, minutesFromNow } = sectionBody.extend({ minutesFromNow: z.number().int().min(-600).max(60 * 24 * 90) }).parse(req.body);
+      const now = clock.now();
+      await booking.setSectionStart(sectionId, new Date(now.getTime() + minutesFromNow * 60_000), now);
+      res.status(204).end();
+    }));
 
     app.post('/api/dev/advance', wrap(async (req, res) => {
       const { ms } = z.object({ ms: z.number().int().positive().max(7 * 24 * 3600 * 1000) }).parse(req.body);

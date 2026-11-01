@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { HOLD_MS, OFFER_MS } from '@parks/shared';
 import { api } from '../api/client';
 import { useRegistration } from '../state/RegistrationProvider';
@@ -52,6 +53,23 @@ export function DevPanel() {
           >
             Another family carts Art · Saturdays
           </button>
+          <span className={styles.note}>Move Swim 2 · Saturdays' first class to see offer windows shrink:</span>
+          <div className={styles.row}>
+            {([['25 h', 25 * 60], ['3 h', 180], ['1 h', 60], ['15 min', 15]] as const).map(([label, minutes]) => (
+              <button
+                key={label}
+                type="button"
+                className={styles.control}
+                onClick={() => run(async () => {
+                  await api.dev.sectionStart('swim2-sat', minutes);
+                  await reloadCatalog();
+                })}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <Link to="/staff" className={styles.control}>Open staff view</Link>
           <button type="button" className={styles.reset} onClick={() => run(async () => { await api.dev.reset(); await reloadCatalog(); showToast(null); })}>
             Reset demo
           </button>

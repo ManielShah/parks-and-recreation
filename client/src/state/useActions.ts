@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { api } from '../api/client';
-import { kidName, myHolds, sectionName } from '../domain/model';
+import { kidName, myHolds, offerWindowNow, sectionName } from '../domain/model';
 import { useRegistration } from './RegistrationProvider';
 
 /** Every booking action, with the confirmation copy the design shows for it. */
@@ -9,6 +9,12 @@ export function useActions() {
   const navigate = useNavigate();
   const name = (sectionId: string) => (model ? sectionName(model, sectionId) : '');
   const kid = (id: string | null) => (model ? kidName(model, id) : 'Your child');
+  const windowCopy = (sectionId: string) => {
+    const w = model ? offerWindowNow(model, sectionId) : null;
+    return w
+      ? `You’ll have ${w} to accept it (less as the first class gets closer).`
+      : 'This close to class, our staff assign open spots to the waitlist.';
+  };
 
   return {
     async addToCart(sectionId: string, childId: string) {
@@ -31,7 +37,7 @@ export function useActions() {
       const res = await run(() => api.joinWaitlist(sectionId, childId));
       if (!res) return false;
       showToast({
-        text: `${kid(childId)} is #${res.entry.position} on the waitlist for ${name(sectionId)}. If a spot opens, we’ll text and email you, and you’ll have 2 hours to accept it. Nothing is charged unless you accept.`,
+        text: `${kid(childId)} is #${res.entry.position} on the waitlist for ${name(sectionId)}. If a spot opens, we’ll text and email you. ${windowCopy(sectionId)} Nothing is charged unless you accept.`,
         tone: 'info',
       });
       return true;
@@ -58,6 +64,15 @@ export function useActions() {
       setLastOrder(order);
       navigate('/checkout/done');
       showToast({ text: `Spot accepted. ${kid(childId)} is registered and your saved card was charged.`, tone: 'good' });
+    },
+
+    /** Claim a spot during a staff last call; the first family on the waitlist to claim gets it. */
+    async claim(entryId: string, childId: string) {
+      const order = await run(() => api.claim(entryId));
+      if (!order) return;
+      setLastOrder(order);
+      navigate('/checkout/done');
+      showToast({ text: `Spot claimed. ${kid(childId)} is registered and your saved card was charged.`, tone: 'good' });
     },
 
     async declineOffer(holdId: string, sectionId: string) {

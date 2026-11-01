@@ -37,6 +37,23 @@ async function taken(sectionId: string, now: Date): Promise<{ regs: number; hold
   return rows[0];
 }
 
+const MIN = 60 * 1000;
+const HOUR = 60 * MIN;
+
+/** Move a section's first class to `ms` after `from` (default: now on the test clock). */
+async function startsIn(sectionId: string, ms: number, from = clock.now()): Promise<void> {
+  await pool.query('UPDATE sections SET starts_at = $2 WHERE id = $1', [sectionId, new Date(from.getTime() + ms)]);
+}
+
+/** Fill art-sat (9 of 10 seeded) so the next family has to wait. */
+async function fillArtSat(): Promise<void> {
+  await pool.query(`INSERT INTO registrations (section_id, family_id, confirmation, price_cents) VALUES ('art-sat', 'community', 'X-fill', 0)`);
+}
+
+async function offerFor(family: string, sectionId = 'art-sat') {
+  return (await getState(family))!.sections.find((s) => s.sectionId === sectionId)!.holds.find((h) => h.kind === 'offer');
+}
+
 const codeOf = (r: PromiseSettledResult<unknown>) =>
   r.status === 'rejected' ? (r.reason instanceof BookingError ? r.reason.code : String(r.reason)) : 'ok';
 
@@ -188,6 +205,200 @@ describe('holds and waitlist timing', () => {
     const { hold } = await booking.addToCart(a!.family, 'art-wed', a!.child, clock.now());
     clock.advance(HOLD_MS);
     await assert.rejects(booking.checkout(a!.family, [hold.id], clock.now()), { code: 'expired' });
+  });
+});
+
+describe('dynamic offer windows', () => {
+  for (const [label, until, window] of [
+    ['more than 24 hours out: 2 hours', 25 * HOUR, 2 * HOUR],
+    ['2–24 hours out: 30 minutes', 3 * HOUR, 30 * MIN],
+    ['20 minutes–2 hours out: 10 minutes', HOUR, 10 * MIN],
+    ['exactly 20 minutes out: 10 minutes, ending at the 10-minute cutoff', 20 * MIN, 10 * MIN],
+  ] as const) {
+    test(label, async () => {
+      const [a] = await makeFamilies(1);
+      await fillArtSat();
+      await booking.joinWaitlist(a!.family, 'art-sat', a!.child, clock.now());
+      const at = clock.now();
+      await startsIn('art-sat', until, at);
+      await booking.simulateDropout('art-sat', 'community', at);
+      assert.equal((await offerFor(a!.family))!.expiresAt - at.getTime(), window);
+    });
+  }
+
+  test('under 20 minutes out, nothing is offered automatically and the spot stays with the waitlist', async () => {
+    const [a, walkIn] = await makeFamilies(2);
+    await fillArtSat();
+    await booking.joinWaitlist(a!.family, 'art-sat', a!.child, clock.now());
+    await startsIn('art-sat', 15 * MIN);
+    await booking.simulateDropout('art-sat', 'community', clock.now());
+    await sweepOnce();
+
+    assert.equal(await offerFor(a!.family), undefined);
+    assert.equal((await getState(a!.family))!.waitlist.length, 1);
+    // FIFO: the open seat isn't up for grabs while families are waiting for it.
+    await assert.rejects(booking.addToCart(walkIn!.family, 'art-sat', walkIn!.child, clock.now()), { code: 'waitlist_priority' });
+  });
+
+  test('an expired offer moves to the next family, with a window recomputed for the new time', async () => {
+    const [a, b, c] = await makeFamilies(3);
+    await fillArtSat();
+    for (const f of [a, b, c]) await booking.joinWaitlist(f!.family, 'art-sat', f!.child, clock.now());
+    const at = clock.now();
+    await startsIn('art-sat', 2 * HOUR + 40 * MIN, at);
+    await booking.simulateDropout('art-sat', 'community', at);
+    const offerA = (await offerFor(a!.family))!;
+    assert.equal(offerA.expiresAt - at.getTime(), 30 * MIN);
+
+    // A lets it lapse (2 h 10 min to go): B is offered 30 minutes from that moment.
+    await booking.sweepSection('art-sat', new Date(offerA.expiresAt));
+    assert.equal(await offerFor(a!.family), undefined);
+    const offerB = (await offerFor(b!.family))!;
+    assert.equal(offerB.expiresAt - offerA.expiresAt, 30 * MIN);
+
+    // B lets it lapse (1 h 40 min to go): C gets only 10 minutes.
+    await booking.sweepSection('art-sat', new Date(offerB.expiresAt));
+    assert.equal((await offerFor(c!.family))!.expiresAt - offerB.expiresAt, 10 * MIN);
+  });
+});
+
+describe('staff overrides near class start', () => {
+  test('staff can offer the spot to the next family, even inside the last 10 minutes', async () => {
+    const [a, b] = await makeFamilies(2);
+    await fillArtSat();
+    await booking.joinWaitlist(a!.family, 'art-sat', a!.child, clock.now());
+    await booking.joinWaitlist(b!.family, 'art-sat', b!.child, clock.now());
+    const at = clock.now();
+    await startsIn('art-sat', 5 * MIN, at);
+    await booking.simulateDropout('art-sat', 'community', at);
+    assert.equal(await offerFor(a!.family), undefined);
+
+    await booking.staffOffer('art-sat', 3 * MIN, at);
+    assert.equal((await offerFor(a!.family))!.expiresAt - at.getTime(), 3 * MIN);
+    assert.equal(await offerFor(b!.family), undefined, 'still first in line first');
+
+    const { rows } = await pool.query(`SELECT actor FROM waitlist_events WHERE event = 'offered' ORDER BY id DESC LIMIT 1`);
+    assert.equal(rows[0].actor, 'staff');
+  });
+
+  test('last call: everyone waiting is told, and of simultaneous claims exactly one wins', async () => {
+    const families = await makeFamilies(4);
+    await fillArtSat();
+    const entries: { id: string }[] = [];
+    for (const f of families) entries.push(await booking.joinWaitlist(f.family, 'art-sat', f.child, clock.now()));
+    await startsIn('art-sat', 15 * MIN);
+    await booking.simulateDropout('art-sat', 'community', clock.now());
+
+    assert.equal(await booking.staffLastCall('art-sat', 10 * MIN, clock.now()), 4);
+    const results = await Promise.allSettled(families.map((f, i) => booking.claimSpot(f.family, entries[i]!.id, clock.now())));
+    assert.deepEqual(results.map(codeOf).sort(), ['ok', 'section_full', 'section_full', 'section_full']);
+    const t = await taken('art-sat', clock.now());
+    assert.equal(t.regs + t.holds, t.capacity);
+  });
+
+  test('last call is refused while automatic offers are still running (the spot is already offered)', async () => {
+    const [a] = await makeFamilies(1);
+    await fillArtSat();
+    await booking.joinWaitlist(a!.family, 'art-sat', a!.child, clock.now());
+    await startsIn('art-sat', 3 * HOUR);
+    await assert.rejects(booking.staffLastCall('art-sat', 10 * MIN, clock.now()), { code: 'section_full' });
+  });
+});
+
+describe('waitlist audit trail', () => {
+  test('records joins, offers, declines, expirations and acceptances in order', async () => {
+    const [a, b, c] = await makeFamilies(3);
+    await fillArtSat();
+    for (const f of [a, b, c]) await booking.joinWaitlist(f!.family, 'art-sat', f!.child, clock.now());
+    await booking.simulateDropout('art-sat', 'community', clock.now());
+    await booking.declineOffer(a!.family, (await offerFor(a!.family))!.id, clock.now());
+    clock.advance(OFFER_MS);
+    await sweepOnce();
+    await booking.acceptOffer(c!.family, (await offerFor(c!.family))!.id, clock.now());
+
+    const { rows } = await pool.query(
+      `SELECT event, actor, family_id FROM waitlist_events WHERE section_id = 'art-sat' ORDER BY id`,
+    );
+    assert.deepEqual(rows.map((r) => `${r.event}:${r.actor}:${r.family_id}`), [
+      `joined:family:${a!.family}`, `joined:family:${b!.family}`, `joined:family:${c!.family}`,
+      `offered:system:${a!.family}`, `declined:family:${a!.family}`,
+      `offered:system:${b!.family}`, `expired:system:${b!.family}`,
+      `offered:system:${c!.family}`, `accepted:family:${c!.family}`,
+    ]);
+  });
+});
+
+describe('capacity guarantees', () => {
+  test('the database refuses any write that would put a section over capacity', async () => {
+    await fillArtSat();
+    await assert.rejects(
+      pool.query(`INSERT INTO registrations (section_id, family_id, confirmation, price_cents) VALUES ('art-sat', 'community', 'X-over', 0)`),
+      /over capacity/,
+    );
+  });
+
+  test('cancellations, walk-ins and waitlist acceptances at once never overbook or skip the line', async () => {
+    const waiting = await makeFamilies(5);
+    await fillArtSat();
+    for (const f of waiting) await booking.joinWaitlist(f.family, 'art-sat', f.child, clock.now());
+    const walkIns = await Promise.all(Array.from({ length: 10 }, async (_, i) => {
+      await pool.query('INSERT INTO families (id, name) VALUES ($1, $1)', [`walk${i}`]);
+      await pool.query('INSERT INTO children (id, family_id, name, age) VALUES ($1, $2, $1, 7)', [`walk${i}-kid`, `walk${i}`]);
+      return { family: `walk${i}`, child: `walk${i}-kid` };
+    }));
+
+    // Three families cancel while ten walk-ins try to grab the freed seats.
+    await Promise.allSettled([
+      ...[1, 2, 3].map(() => booking.simulateDropout('art-sat', 'community', clock.now())),
+      ...walkIns.map((w) => booking.addToCart(w.family, 'art-sat', w.child, clock.now())),
+    ]);
+    // Everyone offered accepts at once, while two more families cancel.
+    const offered = [];
+    for (const f of waiting) {
+      const o = await offerFor(f.family);
+      if (o) offered.push({ f, o });
+    }
+    assert.equal(offered.length, 3);
+    await Promise.allSettled([
+      ...offered.map(({ f, o }) => booking.acceptOffer(f.family, o.id, clock.now())),
+      ...[1, 2].map(() => booking.simulateDropout('art-sat', 'community', clock.now())),
+    ]);
+
+    const t = await taken('art-sat', clock.now());
+    assert.ok(t.regs + t.holds <= t.capacity, JSON.stringify(t));
+    const { rows } = await pool.query(
+      `SELECT family_id FROM registrations WHERE section_id = 'art-sat' AND withdrawn_at IS NULL AND family_id LIKE 'walk%'`,
+    );
+    assert.equal(rows.length, 0, 'no walk-in got a seat while families were waiting');
+  });
+});
+
+describe('expired-offer transaction bug (regression)', () => {
+  test('accepting an expired offer still passes the spot to the next family, without waiting for the sweeper', async () => {
+    const [a, b] = await makeFamilies(2);
+    await pool.query(`INSERT INTO registrations (section_id, family_id, confirmation, price_cents) VALUES ('art-sat', 'community', 'X-1', 0)`);
+    await booking.joinWaitlist(a!.family, 'art-sat', a!.child, clock.now());
+    await booking.joinWaitlist(b!.family, 'art-sat', b!.child, clock.now());
+    await booking.simulateDropout('art-sat', 'community', clock.now());
+    const offer = (await getState(a!.family))!.sections.find((s) => s.sectionId === 'art-sat')!.holds[0]!;
+
+    clock.advance(OFFER_MS + 1);
+    await assert.rejects(booking.acceptOffer(a!.family, offer.id, clock.now()), { code: 'expired' });
+    // No sweepOnce() here: the failed request itself must have handed the spot on.
+    const bHolds = (await getState(b!.family))!.sections.find((s) => s.sectionId === 'art-sat')!.holds;
+    assert.equal(bHolds[0]?.kind, 'offer');
+  });
+
+  test('a request that fails a check still keeps the expirations it processed', async () => {
+    const [a, b, walkIn] = await makeFamilies(3);
+    await fillArtSat();
+    await booking.joinWaitlist(a!.family, 'art-sat', a!.child, clock.now());
+    await booking.joinWaitlist(b!.family, 'art-sat', b!.child, clock.now());
+    await booking.simulateDropout('art-sat', 'community', clock.now());
+    clock.advance(OFFER_MS);
+    // A walk-in's add-to-cart settles the section (A's offer lapses, B is offered), then fails.
+    await assert.rejects(booking.addToCart(walkIn!.family, 'art-sat', walkIn!.child, clock.now()), { code: 'section_full' });
+    assert.equal((await offerFor(b!.family))?.kind, 'offer');
   });
 });
 

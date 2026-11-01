@@ -23,7 +23,7 @@ export function OfferBanners() {
                 <div className={styles.text}>
                   <span className={styles.title}>A spot opened for {kidName(model, o.childId)} in {sectionName(model, o.sectionId)}</span>
                   <span className={styles.detail}>
-                    We sent this to your phone and email. Accept within 2 hours to claim it. Accepting registers {kidName(model, o.childId)} and charges your saved card {price}. Nothing is charged if you don't accept.
+                    We sent this to your phone and email. Accept before the timer runs out to claim it. Accepting registers {kidName(model, o.childId)} and charges your saved card {price}. Nothing is charged if you don't accept.
                   </span>
                 </div>
               </div>
@@ -31,6 +31,28 @@ export function OfferBanners() {
                 <span className={styles.timer}>{countdown(o.expiresAt - model.now)} left</span>
                 <Button variant="success" onClick={() => actions.acceptOffer(o.id, o.childId)}>Accept and pay {price}</Button>
                 <Button variant="successOutline" onClick={() => actions.declineOffer(o.id, o.sectionId)}>Decline</Button>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+      {model.state.waitlist.filter((w) => w.claimableUntil).map((w) => {
+        const price = money(model.section(w.sectionId).program.priceCents);
+        return (
+          <div role="region" aria-label="Last call" className={styles.banner} key={`last-call-${w.id}`}>
+            <div className={styles.inner}>
+              <div className={styles.lead}>
+                <span className={styles.badge}><BellIcon size={18} /></span>
+                <div className={styles.text}>
+                  <span className={styles.title}>Last call: a spot is open in {sectionName(model, w.sectionId)}</span>
+                  <span className={styles.detail}>
+                    Class starts soon, so this spot goes to the first family on the waitlist to claim it. Claiming registers {kidName(model, w.childId)} and charges your saved card {price}.
+                  </span>
+                </div>
+              </div>
+              <div className={styles.actions}>
+                <span className={styles.timer}>{countdown(w.claimableUntil! - model.now)} left</span>
+                <Button variant="success" onClick={() => actions.claim(w.id, w.childId)}>Claim and pay {price}</Button>
               </div>
             </div>
           </div>

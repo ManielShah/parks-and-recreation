@@ -45,7 +45,10 @@ export function ProgramDetail({ model }: { model: Model }) {
     try {
       if (a.type === 'add' && selected) await actions.addToCart(v.id, selected.kid.id);
       else if (a.type === 'waitlist' && selected) await actions.joinWaitlist(v.id, selected.kid.id);
-      else if (a.type === 'accept') await actions.acceptOffer(a.holdId, model.live(v.id).holds.find((h) => h.id === a.holdId)?.childId ?? null);
+      else if (a.type === 'claim') {
+        const entry = model.state.waitlist.find((w) => w.id === a.entryId);
+        if (entry) await actions.claim(entry.id, entry.childId);
+      } else if (a.type === 'accept') await actions.acceptOffer(a.holdId, model.live(v.id).holds.find((h) => h.id === a.holdId)?.childId ?? null);
       else if (a.type === 'leave') {
         const entry = model.state.waitlist.find((w) => w.id === a.entryId);
         if (entry) await actions.leaveWaitlist(entry.id, entry.sectionId, entry.childId);
@@ -143,6 +146,7 @@ export function ProgramDetail({ model }: { model: Model }) {
                   <div className={styles.when}>
                     <span className={styles.day}>{v.day}</span>
                     <span className={styles.time}>{v.time}</span>
+                    <span className={styles.firstClass}>First class {v.firstClass}</span>
                   </div>
                   <div className={styles.status}>
                     <CapacityDots dots={v.dots} label={v.capacityLabel} />
@@ -167,7 +171,7 @@ export function ProgramDetail({ model }: { model: Model }) {
           <div className={styles.steps}>
             <div className={styles.step}><span className={styles.stepNum}>1</span><span>Add a spot to your cart. It's held for 5 minutes while you check out, and other families see it as taken.</span></div>
             <div className={styles.step}><span className={styles.stepNum}>2</span><span>Pay before the timer runs out, or the spot goes back to the next family.</span></div>
-            <div className={styles.step}><span className={styles.stepNum}>3</span><span>Section full? Join the waitlist. When a spot opens, we text and email the first family in line. They have 2 hours to accept, and their saved card is charged when they do. Nobody is charged without accepting.</span></div>
+            <div className={styles.step}><span className={styles.stepNum}>3</span><span>Section full? Join the waitlist. When a spot opens, we text and email the first family in line. They have up to 2 hours to accept (as little as 10 minutes close to the first class), and their saved card is charged when they do. Nobody is charged without accepting.</span></div>
             <div className={styles.step}><span className={styles.stepNum}>4</span><span>Not open yet? Ask us to notify you, and we'll text and email you the moment registration opens.</span></div>
           </div>
         </Card>

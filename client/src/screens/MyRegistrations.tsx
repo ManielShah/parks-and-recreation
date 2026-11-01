@@ -58,12 +58,23 @@ export function MyRegistrations({ model }: { model: Model }) {
             <div className={styles.info}>
               <span className={styles.name}>{model.section(w.sectionId).program.name}</span>
               <span className={styles.sub}>{when(w.sectionId)} · {kidName(model, w.childId)}</span>
-              <span className={styles.pos}>#{w.position} of {model.live(w.sectionId).waitlistLength} in line</span>
+              <span className={styles.pos}>
+                {w.claimableUntil
+                  ? `Last call · claim within ${countdown(w.claimableUntil - model.now)}`
+                  : `#${w.position} of ${model.live(w.sectionId).waitlistLength} in line`}
+              </span>
             </div>
-            <Button variant="secondary" size="compact" onClick={() => actions.leaveWaitlist(w.id, w.sectionId, w.childId)}>Leave waitlist</Button>
+            <div className={styles.buttons}>
+              {w.claimableUntil && (
+                <Button variant="success" size="compact" onClick={() => actions.claim(w.id, w.childId)}>
+                  Claim and pay {money(model.section(w.sectionId).program.priceCents)}
+                </Button>
+              )}
+              <Button variant="secondary" size="compact" onClick={() => actions.leaveWaitlist(w.id, w.sectionId, w.childId)}>Leave waitlist</Button>
+            </div>
           </div>
         ))}
-        <span className={styles.fine}>When a spot opens, we'll text and email you. You'll have 2 hours to accept it. Your saved card is charged when you accept, and never if you don't.</span>
+        <span className={styles.fine}>When a spot opens, we'll text and email you. You'll have up to 2 hours to accept it, less as the first class gets closer. Your saved card is charged when you accept, and never if you don't.</span>
       </Card>
     </div>
   );
