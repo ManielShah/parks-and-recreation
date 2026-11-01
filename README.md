@@ -125,9 +125,7 @@ How I worked with it:
 - **It built "accept, then pay at checkout" as two steps.** I changed it to charge at the moment of acceptance.
 - **It implemented the design's "held for another family" dots and countdowns.** I had them removed. It then also stopped the API from sending that data at all, so it can't be found by inspecting the page.
 - **"Can two families book the last seat?"** Its answer, that the database lock makes it safe, was correct but incomplete. I pointed out that the 24 losing families still *saw* an open seat and expected to get it. That user-experience gap is now first on the next-steps list.
-- **The README went through several rounds.** First too long, then organized around my change list instead of this exercise's questions.
 - **Smaller corrections:**
-  - It couldn't find my repository and guessed the GitHub owner wrong. It found the right one once I connected GitHub.
   - Some of its own tests had wrong expectations, or failed now and then because they read the clock twice. It caught and fixed these itself.
 
 ### Asking the AI to break it
