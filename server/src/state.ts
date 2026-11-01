@@ -10,7 +10,7 @@ export async function getCatalog(): Promise<CatalogResponse> {
        FROM programs ORDER BY sort_order, id`,
   );
   const { rows: sections } = await pool.query(
-    'SELECT id, program_id, day_label, time_label, capacity, starts_at FROM sections ORDER BY sort_order, id',
+    'SELECT id, program_id, day_label, time_label, capacity, starts_at, min_age, max_age FROM sections ORDER BY sort_order, id',
   );
   return {
     programs: programs.map((p): Program => ({
@@ -21,7 +21,7 @@ export async function getCatalog(): Promise<CatalogResponse> {
         .filter((s) => s.program_id === p.id)
         .map((s) => ({
           id: s.id, programId: s.program_id, day: s.day_label, time: s.time_label, capacity: s.capacity,
-          startsAt: s.starts_at.getTime(),
+          startsAt: s.starts_at.getTime(), minAge: s.min_age, maxAge: s.max_age,
         })),
     })),
   };

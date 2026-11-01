@@ -44,7 +44,9 @@ interface SectionRow {
 
 const SECTION_SELECT = `
   SELECT s.id, s.capacity, s.program_id, s.starts_at, s.last_call_until,
-         p.min_age, p.max_age, p.price_cents, p.registration_opens_at,
+         -- A section's own age range, where it has one, replaces the program's.
+         COALESCE(s.min_age, p.min_age) AS min_age, COALESCE(s.max_age, p.max_age) AS max_age,
+         p.price_cents, p.registration_opens_at,
          p.name || ' · ' || s.day_label AS label
     FROM sections s JOIN programs p ON p.id = s.program_id
    WHERE s.id = $1`;
@@ -279,7 +281,7 @@ export async function addToCart(familyId: string, sectionId: string, childId: st
     assertOpen(s, now);
 
     if (!isAgeEligible(child.age, { minAge: s.min_age, maxAge: s.max_age })) {
-      throw new BookingError('not_eligible', `${child.name} is outside this program's age range.`);
+      throw new BookingError('not_eligible', `${child.name} is outside this section's age range (${s.min_age}–${s.max_age}).`);
     }
     await assertChildFree(c, child.id, s.program_id, now);
 
@@ -321,7 +323,7 @@ export async function joinWaitlist(familyId: string, sectionId: string, childId:
     assertOpen(s, now);
 
     if (!isAgeEligible(child.age, { minAge: s.min_age, maxAge: s.max_age })) {
-      throw new BookingError('not_eligible', `${child.name} is outside this program's age range.`);
+      throw new BookingError('not_eligible', `${child.name} is outside this section's age range (${s.min_age}–${s.max_age}).`);
     }
     await assertChildFree(c, child.id, s.program_id, now);
     if ((await openSpots(c, s, now)) > 0 && (await waitlistLength(c, s.id)) === 0) {

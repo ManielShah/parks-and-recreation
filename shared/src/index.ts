@@ -69,6 +69,9 @@ export interface Section {
   capacity: number;
   /** First class (epoch ms). Offer windows and automatic offers depend on it. */
   startsAt: number;
+  /** This section's own age limits, or null where the program's apply. */
+  minAge: number | null;
+  maxAge: number | null;
 }
 
 export interface Program {
@@ -239,6 +242,22 @@ export function classSize(program: Pick<Program, 'sections'>): number {
   return Math.max(0, ...program.sections.map((s) => s.capacity));
 }
 
-export function isAgeEligible(age: number, program: Pick<Program, 'minAge' | 'maxAge'>): boolean {
-  return age >= program.minAge && age <= program.maxAge;
+export function isAgeEligible(age: number, range: { minAge: number; maxAge: number }): boolean {
+  return age >= range.minAge && age <= range.maxAge;
+}
+
+/** The ages a section actually takes: its own limits where set, the program's otherwise. */
+export function sectionAges(program: Pick<Program, 'minAge' | 'maxAge'>, section: Pick<Section, 'minAge' | 'maxAge'>) {
+  return { minAge: section.minAge ?? program.minAge, maxAge: section.maxAge ?? program.maxAge };
+}
+
+/** True when a section narrows its program's age range. */
+export function hasOwnAges(program: Pick<Program, 'minAge' | 'maxAge'>, section: Pick<Section, 'minAge' | 'maxAge'>): boolean {
+  const r = sectionAges(program, section);
+  return r.minAge !== program.minAge || r.maxAge !== program.maxAge;
+}
+
+/** A program suits a child if any of its sections does. */
+export function programSuits(age: number, program: Pick<Program, 'minAge' | 'maxAge' | 'sections'>): boolean {
+  return program.sections.some((s) => isAgeEligible(age, sectionAges(program, s)));
 }

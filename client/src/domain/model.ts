@@ -1,4 +1,4 @@
-import { CART_MAX, autoOfferExpiry, formatDuration, isAgeEligible, isRegistrationOpen, type Hold, type Kid, type Program, type Section, type SectionLive, type StateResponse, type Tone } from '@parks/shared';
+import { CART_MAX, autoOfferExpiry, formatDuration, hasOwnAges, isAgeEligible, isRegistrationOpen, programSuits, sectionAges, type Hold, type Kid, type Program, type Section, type SectionLive, type StateResponse, type Tone } from '@parks/shared';
 import { countdown, money, plural, when } from './format';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -74,7 +74,7 @@ function involvement(m: Model, kidId: string, program: Program): Involvement {
 }
 
 export function kidStatus(m: Model, kid: Kid, program: Program): { ok: boolean; reason: string } {
-  if (!isAgeEligible(kid.age, program)) return { ok: false, reason: `Ages ${program.minAge}–${program.maxAge} only` };
+  if (!programSuits(kid.age, program)) return { ok: false, reason: `Ages ${program.minAge}–${program.maxAge} only` };
   switch (involvement(m, kid.id, program)) {
     case 'reg': return { ok: false, reason: 'Already registered' };
     case 'offer': return { ok: false, reason: 'Waitlist spot offered' };
@@ -134,6 +134,8 @@ export interface SectionView {
   time: string;
   /** "Mon, Jan 4, 4:00 PM" */
   firstClass: string;
+  /** "Ages 6–7", only for sections narrower than their program. */
+  ages: string | null;
   dots: DotKind[];
   capacityLabel: string;
   note: string;
@@ -149,6 +151,8 @@ export interface SectionView {
 export function sectionView(m: Model, program: Program, section: Section, kid: Kid | null, kidOk: boolean): SectionView {
   const l = m.live(section.id);
   const opens = opening(m, program);
+  const range = sectionAges(program, section);
+  const ages = hasOwnAges(program, section) ? `Ages ${range.minAge}–${range.maxAge}` : null;
   const now = m.now;
   const mine = l.holds.filter((h) => h.kind === 'cart');
   const myOffer = l.holds.find((h) => h.kind === 'offer') ?? null;
@@ -192,6 +196,11 @@ export function sectionView(m: Model, program: Program, section: Section, kid: K
     else if (mine.length) { tone = 'info'; action = { type: 'checkout', label: 'Go to checkout' }; }
     else if (myWait && !myRegs.length) { tone = 'info'; secondary = true; action = { type: 'leave', label: 'Leave waitlist', entryId: myWait.id }; }
     else { tone = 'good'; secondary = true; action = { type: 'account', label: 'View registrations' }; }
+  } else if (kid && kidOk && !isAgeEligible(kid.age, range)) {
+    // The child suits the program but not this section's narrower ages.
+    note = `${pre}For ages ${range.minAge}–${range.maxAge} · ${kid.name} is ${kid.age}`;
+    tone = 'muted';
+    action = { type: 'disabled', label: `${ages} only` };
   } else if (open > 0) {
     note = pre + (open === 1 ? 'Only 1 spot left' : `${open} of ${l.capacity} spots open`);
     tone = open === 1 ? 'warn' : hh ? 'info' : 'muted';
@@ -211,6 +220,7 @@ export function sectionView(m: Model, program: Program, section: Section, kid: K
     day: section.day,
     time: section.time,
     firstClass: when(section.startsAt),
+    ages,
     dots,
     capacityLabel: `${l.taken - mineReg} taken, ${dots.filter((d) => d === 'mine').length} yours, ${Math.max(open, 0)} open, out of ${l.capacity} spots`,
     note,

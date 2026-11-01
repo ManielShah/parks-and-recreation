@@ -6,7 +6,7 @@
 
 ![React](https://img.shields.io/badge/React_18-TypeScript-1D5FD1?style=flat-square&logo=react&logoColor=white)
 ![Postgres](https://img.shields.io/badge/Postgres_16-row_locks-13362C?style=flat-square&logo=postgresql&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-38_passing-1E6B3E?style=flat-square)
+![Tests](https://img.shields.io/badge/tests-41_passing-1E6B3E?style=flat-square)
 
 [What I built](#what-i-built-and-why) · [Deferred](#what-i-deferred-and-why) · [Push back](#what-id-push-back-on-and-why) · [Next](#what-id-do-next-with-more-time) · [Tools & Process](#tools--process)
 
@@ -56,7 +56,7 @@ npm test
 
 A family-facing registration site built from the provided design, on a React + TypeScript front end and a Postgres
 back end:
-- browse programs, pick a child, and choose a section
+- browse programs, pick a child, and choose a section. A section can have its own narrower age range (say, a 9–10 week of a 9–12 camp), while others take the program's full range
 - hold a seat in a cart for 5 minutes, then check out
 - join a waitlist when a section is full
 - manage everything under *My registrations*
@@ -83,7 +83,7 @@ Behind it is the part that's hard to get right: **what happens when many familie
 | **What happens when you lose the race for the last seat** | Today the family sees "That section just filled up" and has to join the waitlist themselves. Joining them automatically is better for them, but it's a product decision (consent, notifications), so I didn't make it alone |
 | **A cancellation and refund policy** | Undecided, so the site says *[TO BE CONFIRMED]* rather than inventing one. Withdrawing frees the seat; refunds aren't built |
 | **Late registration after a session starts** | `starts_at` is the first class only. Joining a class already under way needs its own rules (pro-rating, instructor approval) |
-| **Updating the design** | The design still shows other families' holds and moves accepted offers through the cart. The code follows the corrected requirements; the design needs a pass to catch up |
+| **Updating the design** | The design still shows other families' holds, moves accepted offers through the cart, and has no section-level age limits. The code follows the corrected requirements; the design needs a pass to catch up |
 
 ## What I'd push back on and why
 
@@ -160,7 +160,7 @@ the code never asks for. Reasoning about the code wasn't enough; probing it agai
 server/src/booking.ts    every booking rule: holds, checkout, waitlist, offers, staff overrides
 shared/src/index.ts      offer windows (offerWindowMs, autoOfferExpiry), shared types
 server/migrations/       schema: starts_at, capacity trigger, audit trail
-server/test/             38 tests against Postgres, including regression tests for the bugs above
+server/test/             41 tests against Postgres, including regression tests for the bugs above
 client/src/              React screens (family site and /staff), components, design tokens
 ```
 

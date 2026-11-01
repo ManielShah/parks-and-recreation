@@ -511,6 +511,29 @@ describe('charging waitlisted families', () => {
   });
 });
 
+describe('section age limits', () => {
+  test('an age-specific section turns away a child its program would take, while an open section accepts them', async () => {
+    const [leo] = await makeFamilies(1, 10); // Art Studio takes 5–10; its Wednesday section is 5–7 only
+    await assert.rejects(booking.addToCart(leo!.family, 'art-wed', leo!.child, clock.now()), { code: 'not_eligible' });
+    await booking.addToCart(leo!.family, 'art-sat', leo!.child, clock.now());
+  });
+
+  test('the waitlist checks the section’s ages too', async () => {
+    const [six] = await makeFamilies(1, 6); // Swim 2 takes 6–8; Saturdays are 7–8 only, Thursdays aren't restricted
+    await assert.rejects(booking.joinWaitlist(six!.family, 'swim2-sat', six!.child, clock.now()), { code: 'not_eligible' });
+    await booking.joinWaitlist(six!.family, 'swim2-thu', six!.child, clock.now());
+  });
+
+  test('the catalog sends each section’s own limits, or null where the program’s apply', async () => {
+    const res = await request(createApp()).get('/api/catalog').expect(200);
+    const swim2 = res.body.programs.find((p: { id: string }) => p.id === 'swim2');
+    assert.deepEqual(
+      swim2.sections.map((s: { id: string; minAge: number | null; maxAge: number | null }) => [s.id, s.minAge, s.maxAge]),
+      [['swim2-tue', 6, 7], ['swim2-thu', null, null], ['swim2-sat', 7, 8]],
+    );
+  });
+});
+
 describe('registration opening times', () => {
   test('nobody can cart or waitlist before registration opens, and reminders go out when it does', async () => {
     const [a] = await makeFamilies(1, 10);

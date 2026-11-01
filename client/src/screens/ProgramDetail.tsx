@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { classSize } from '@parks/shared';
+import { classSize, hasOwnAges } from '@parks/shared';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../components/Button';
 import { Card, CardTitle } from '../components/Card';
@@ -77,7 +77,11 @@ export function ProgramDetail({ model }: { model: Model }) {
               <h1 className={styles.title}>{program.name}</h1>
               <p className={styles.desc}>{program.description}</p>
               <dl className={styles.facts}>
-                <div className={styles.fact}><dt>Ages</dt><dd>{program.minAge}–{program.maxAge} years</dd></div>
+                <div className={styles.fact}>
+                  <dt>Ages</dt>
+                  <dd>{program.minAge}–{program.maxAge} years</dd>
+                  {program.sections.some((s) => hasOwnAges(program, s)) && <dd className={styles.factNote}>Some sections are for narrower ages</dd>}
+                </div>
                 <div className={styles.fact}><dt>Dates</dt><dd>{program.dates}</dd></div>
                 <div className={styles.fact}><dt>Location</dt><dd>{program.location}</dd></div>
                 <div className={styles.fact}><dt>Fee</dt><dd>{money(program.priceCents)}</dd></div>
@@ -147,6 +151,7 @@ export function ProgramDetail({ model }: { model: Model }) {
                     <span className={styles.day}>{v.day}</span>
                     <span className={styles.time}>{v.time}</span>
                     <span className={styles.firstClass}>First class {v.firstClass}</span>
+                    {v.ages && <span className={styles.ageTag}>{v.ages}</span>}
                   </div>
                   <div className={styles.status}>
                     <CapacityDots dots={v.dots} label={v.capacityLabel} />

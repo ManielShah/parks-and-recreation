@@ -1,5 +1,5 @@
 import { useSearchParams } from 'react-router-dom';
-import { CATEGORIES, isAgeEligible } from '@parks/shared';
+import { CATEGORIES, programSuits } from '@parks/shared';
 import { Button } from '../components/Button';
 import { Chip } from '../components/Chip';
 import { ProgramCard } from '../components/ProgramCard';
@@ -23,7 +23,7 @@ export function Browse({ model }: { model: Model }) {
   };
 
   const programs = model.programs.filter(
-    (p) => (ageNum === null || isAgeEligible(ageNum, p)) && (!cat || p.category === cat),
+    (p) => (ageNum === null || programSuits(ageNum, p)) && (!cat || p.category === cat),
   );
 
   return (

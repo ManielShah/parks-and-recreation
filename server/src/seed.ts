@@ -12,6 +12,8 @@ interface SeedSection {
   time: string;
   /** First class: days after the session's first Monday, and local start time. */
   start: { day: number; hour: number; minute?: number };
+  /** Narrower age range for this section only; omitted means the program's range applies. */
+  ages?: [number, number];
   enrolled: number;
   waitlist?: number;
 }
@@ -58,7 +60,7 @@ export const SEED_PROGRAMS: SeedProgram[] = [
     location: 'Central Rec Gym', price: 70, dates: 'Jan 9 – Feb 27',
     description: 'Rolls, balance beams and soft landings for preschoolers. A parent or caregiver stays on deck for the first two classes.',
     sections: [
-      { id: 'tots-fri', day: 'Fridays', time: '10:00–10:45 am', start: { day: 4, hour: 10 }, enrolled: 5 },
+      { id: 'tots-fri', day: 'Fridays', time: '10:00–10:45 am', ages: [3, 4], start: { day: 4, hour: 10 }, enrolled: 5 },
       { id: 'tots-sat', day: 'Saturdays', time: '9:00–9:45 am', start: { day: 5, hour: 9 }, enrolled: 4 },
     ],
   },
@@ -78,9 +80,9 @@ export const SEED_PROGRAMS: SeedProgram[] = [
     location: 'Northside Aquatic Center', price: 85, dates: 'Jan 6 – Feb 28',
     description: 'Front and back glides, rhythmic breathing, and swimming 5 yards on their own. Kids should be comfortable putting their face in the water.',
     sections: [
-      { id: 'swim2-tue', day: 'Tuesdays', time: '4:00–5:00 pm', start: { day: 1, hour: 16 }, enrolled: 3 },
+      { id: 'swim2-tue', day: 'Tuesdays', time: '4:00–5:00 pm', ages: [6, 7], start: { day: 1, hour: 16 }, enrolled: 3 },
       { id: 'swim2-thu', day: 'Thursdays', time: '4:00–5:00 pm', start: { day: 3, hour: 16 }, enrolled: 5 },
-      { id: 'swim2-sat', day: 'Saturdays', time: '10:00–11:00 am', start: { day: 5, hour: 10 }, enrolled: 6, waitlist: 2 },
+      { id: 'swim2-sat', day: 'Saturdays', time: '10:00–11:00 am', ages: [7, 8], start: { day: 5, hour: 10 }, enrolled: 6, waitlist: 2 },
     ],
   },
   {
@@ -89,7 +91,7 @@ export const SEED_PROGRAMS: SeedProgram[] = [
     location: 'Oak Street Arts Studio', price: 95, dates: 'Jan 7 – Feb 28',
     description: 'Hand-building with clay, then glazing and painting what they made. All materials included. Wear clothes that can get messy.',
     sections: [
-      { id: 'art-wed', day: 'Wednesdays', time: '3:30–5:00 pm', start: { day: 2, hour: 15, minute: 30 }, enrolled: 3 },
+      { id: 'art-wed', day: 'Wednesdays', time: '3:30–5:00 pm', ages: [5, 7], start: { day: 2, hour: 15, minute: 30 }, enrolled: 3 },
       { id: 'art-sat', day: 'Saturdays', time: '1:00–2:30 pm', start: { day: 5, hour: 13 }, enrolled: 9 },
     ],
   },
@@ -99,8 +101,8 @@ export const SEED_PROGRAMS: SeedProgram[] = [
     location: 'Central Rec Gym', price: 140, dates: 'Winter break, Mon–Fri',
     description: 'A week of dribbling, passing and small-sided games. Bring a water bottle and court shoes.',
     sections: [
-      { id: 'bball-w1', day: 'Jan 5–9', time: 'Mon–Fri, 9 am–12 pm', start: { day: 0, hour: 9 }, enrolled: 0 },
-      { id: 'bball-w2', day: 'Jan 12–16', time: 'Mon–Fri, 9 am–12 pm', start: { day: 7, hour: 9 }, enrolled: 0 },
+      { id: 'bball-w1', day: 'Jan 5–9', time: 'Mon–Fri, 9 am–12 pm', ages: [9, 10], start: { day: 0, hour: 9 }, enrolled: 0 },
+      { id: 'bball-w2', day: 'Jan 12–16', time: 'Mon–Fri, 9 am–12 pm', ages: [11, 12], start: { day: 7, hour: 9 }, enrolled: 0 },
     ],
   },
   {
@@ -145,10 +147,13 @@ export async function seed(pool: pg.Pool): Promise<void> {
           p.capacityNote, opensAt, pi],
       );
       for (const [si, s] of p.sections.entries()) {
+        if (s.ages && (s.ages[0] < p.minAge || s.ages[1] > p.maxAge)) {
+          throw new Error(`${s.id}: ages ${s.ages.join('–')} fall outside ${p.id}'s ${p.minAge}–${p.maxAge}`);
+        }
         await c.query(
-          `INSERT INTO sections (id, program_id, day_label, time_label, capacity, starts_at, sort_order)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [s.id, p.id, s.day, s.time, p.capacity, firstClass(sessionStart, s.start), si],
+          `INSERT INTO sections (id, program_id, day_label, time_label, capacity, starts_at, min_age, max_age, sort_order)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [s.id, p.id, s.day, s.time, p.capacity, firstClass(sessionStart, s.start), s.ages?.[0] ?? null, s.ages?.[1] ?? null, si],
         );
         for (let i = 0; i < s.enrolled; i++) {
           await c.query(
