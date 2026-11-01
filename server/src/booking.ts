@@ -1,5 +1,5 @@
 import {
-  CART_MAX, HOLD_MS, autoOfferExpiry, formatDuration, isAgeEligible,
+  AUTO_PROMOTION_CUTOFF_MS, CART_MAX, HOLD_MS, autoOfferExpiry, formatDuration, isAgeEligible,
   type ErrorCode, type Hold, type Registration, type Tone, type WaitlistEntry,
 } from '@parks/shared';
 import { pool, tx, type Db } from './db.js';
@@ -16,6 +16,18 @@ export class BookingError extends Error {
 
 // Lock order, everywhere: family -> child -> sections (ascending id). The sweeper only
 // takes section locks, so no two code paths can wait on each other in a cycle.
+
+/**
+ * How family and child rows are locked. NO KEY UPDATE still makes two requests for the same
+ * family or child wait for each other, but unlike FOR UPDATE it doesn't block the KEY SHARE
+ * lock Postgres takes when a row referencing the family is inserted. With FOR UPDATE, a
+ * request holding a section and inserting an offer for family F (section -> F) deadlocked
+ * against F's own request (F -> section): found by the independent review.
+ */
+export const ROW_LOCK = 'FOR NO KEY UPDATE';
+
+const RETRYABLE = new Set(['40P01', '40001']); // deadlock_detected, serialization_failure
+const MAX_ATTEMPTS = 3;
 
 interface SectionRow {
   id: string;
@@ -51,27 +63,41 @@ async function lockSection(c: Db, sectionId: string): Promise<SectionRow> {
  * and the spot sat idle until the sweeper's next pass.
  */
 async function bookingTx<T>(fn: (c: Db) => Promise<T>): Promise<T> {
-  const c = await pool.connect();
-  try {
-    await c.query('BEGIN');
-    const out = await fn(c);
-    await c.query('COMMIT');
-    return out;
-  } catch (err) {
-    if (!(err instanceof BookingError) || !(await keepSettled(c))) await c.query('ROLLBACK').catch(() => {});
-    throw err;
-  } finally {
-    c.release();
+  for (let attempt = 1; ; attempt++) {
+    const c = await pool.connect();
+    let broken: Error | undefined;
+    try {
+      await c.query('BEGIN');
+      const out = await fn(c);
+      await c.query('COMMIT');
+      return out;
+    } catch (err) {
+      if (!(err instanceof BookingError) || !(await keepSettled(c))) {
+        await c.query('ROLLBACK').catch((e: Error) => { broken = e; });
+      }
+      // Lock ordering should prevent deadlocks; if Postgres still reports one, the whole
+      // transaction was rolled back and is safe to run again.
+      const code = (err as { code?: string }).code;
+      if (code && RETRYABLE.has(code) && attempt < MAX_ATTEMPTS) continue;
+      throw err;
+    } finally {
+      // A connection whose rollback failed is in an unknown state: drop it rather than reuse it.
+      c.release(broken);
+    }
   }
 }
 
 async function keepSettled(c: Db): Promise<boolean> {
   try {
     await c.query('ROLLBACK TO SAVEPOINT settled');
+  } catch {
+    return false; // No section was settled yet: a full rollback is right.
+  }
+  try {
     await c.query('COMMIT');
     return true;
-  } catch {
-    // No section was settled yet (or the commit failed): fall back to a full rollback.
+  } catch (err) {
+    console.error('could not keep settled waitlist changes after a failed request', err);
     return false;
   }
 }
@@ -91,13 +117,13 @@ async function record(
 }
 
 async function lockFamily(c: Db, familyId: string): Promise<void> {
-  const { rowCount } = await c.query('SELECT 1 FROM families WHERE id = $1 FOR UPDATE', [familyId]);
+  const { rowCount } = await c.query(`SELECT 1 FROM families WHERE id = $1 ${ROW_LOCK}`, [familyId]);
   if (!rowCount) throw new BookingError('not_found', 'Unknown family.', 404);
 }
 
 async function lockChild(c: Db, familyId: string, childId: string): Promise<{ id: string; name: string; age: number }> {
   const { rows } = await c.query<{ id: string; name: string; age: number }>(
-    'SELECT id, name, age FROM children WHERE id = $1 AND family_id = $2 FOR UPDATE',
+    `SELECT id, name, age FROM children WHERE id = $1 AND family_id = $2 ${ROW_LOCK}`,
     [childId, familyId],
   );
   if (!rows[0]) throw new BookingError('not_found', 'That child is not on your account.', 404);
@@ -202,7 +228,7 @@ async function settleSection(c: Db, s: SectionRow, now: Date): Promise<void> {
     await notify(
       c, h.family_id, 'warn',
       h.kind === 'offer'
-        ? `Your waitlist offer for ${name} in ${s.label} expired, so the spot moved on to the next family in line.`
+        ? `Your waitlist offer for ${name} in ${s.label} expired, so the spot was released.`
         : `Your 5-minute hold on ${s.label} for ${name} ran out, so the spot was released.`,
     );
   }
@@ -372,7 +398,7 @@ export async function acceptOffer(familyId: string, holdId: string, now: Date): 
       `DELETE FROM holds WHERE id = $1 AND family_id = $2 AND kind = 'offer' RETURNING child_id`,
       [holdId, familyId],
     );
-    if (!rows[0]) throw new BookingError('expired', 'This offer has expired and went to the next family in line.');
+    if (!rows[0]) throw new BookingError('expired', 'This offer has expired.');
     const reg = await registerFromWaitlist(c, s, familyId, rows[0].child_id, now);
     await record(c, now, s.id, 'accepted', 'family', { family_id: familyId, child_id: rows[0].child_id });
     return {
@@ -474,6 +500,8 @@ export async function withdraw(familyId: string, registrationId: string, now: Da
 /** Settle one section from outside a request (the sweeper). Skips sections a request is busy with. */
 export async function sweepSection(sectionId: string, now: Date): Promise<void> {
   await tx(async (c) => {
+    // Never let the background sweeper sit behind a request for long; it tries again next tick.
+    await c.query(`SET LOCAL lock_timeout = '2s'`);
     const { rows } = await c.query<SectionRow>(`${SECTION_SELECT} FOR UPDATE OF s SKIP LOCKED`, [sectionId]);
     if (rows[0]) await settleSection(c, rows[0], now);
   });
@@ -578,11 +606,19 @@ export async function simulateCartHold(sectionId: string, familyId: string, now:
   });
 }
 
-/** Move a section's first class (dev tools), then re-run the waitlist under the new timing. */
+/**
+ * Move a section's first class (dev tools; the only way starts_at changes), then re-run the
+ * waitlist under the new timing. Open offers are pulled back inside the new 10-minute cutoff
+ * so no offer outlives it. That includes staff offers: a reschedule resets what staff set.
+ */
 export async function setSectionStart(sectionId: string, startsAt: Date, now: Date): Promise<void> {
   await bookingTx(async (c) => {
     const s = await lockSection(c, sectionId);
     await c.query('UPDATE sections SET starts_at = $2, last_call_until = NULL WHERE id = $1', [sectionId, startsAt]);
+    await c.query(
+      `UPDATE holds SET expires_at = LEAST(expires_at, $2) WHERE section_id = $1 AND kind = 'offer'`,
+      [sectionId, new Date(startsAt.getTime() - AUTO_PROMOTION_CUTOFF_MS)],
+    );
     await settleSection(c, { ...s, starts_at: startsAt, last_call_until: null }, now);
   });
 }

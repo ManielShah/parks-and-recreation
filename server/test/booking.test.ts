@@ -373,6 +373,92 @@ describe('capacity guarantees', () => {
   });
 });
 
+describe('independent review findings (regressions)', () => {
+  test('two siblings on one waitlist: accepting one offer while a withdrawal promotes the other does not deadlock', async () => {
+    // Family F's kids k1 and k2 are both waiting; k1 has an offer. G withdraws (which offers k2 a
+    // spot, touching F's family row) at the same moment F accepts k1's offer (which locks F first).
+    await pool.query(`INSERT INTO families (id, name) VALUES ('F', 'F'), ('G', 'G')`);
+    await pool.query(`INSERT INTO children (id, family_id, name, age) VALUES ('k1', 'F', 'k1', 8), ('k2', 'F', 'k2', 8), ('g1', 'G', 'g1', 8)`);
+    const { rows: reg } = await pool.query(
+      `INSERT INTO registrations (section_id, family_id, child_id, confirmation, price_cents) VALUES ('art-sat', 'G', 'g1', 'X-g', 0) RETURNING id`,
+    );
+    await booking.joinWaitlist('F', 'art-sat', 'k1', clock.now());
+    await booking.joinWaitlist('F', 'art-sat', 'k2', clock.now());
+    await booking.simulateDropout('art-sat', 'community', clock.now());
+    const offer = (await offerFor('F'))!;
+
+    // Hold the section so both requests queue on it in a known order: withdraw first, then accept.
+    const blocker = await pool.connect();
+    await blocker.query('BEGIN');
+    await blocker.query(`SELECT 1 FROM sections WHERE id = 'art-sat' FOR UPDATE`);
+    const withdrawal = booking.withdraw('G', String(reg[0].id), clock.now());
+    await new Promise((r) => setTimeout(r, 100));
+    const acceptance = booking.acceptOffer('F', offer.id, clock.now());
+    await new Promise((r) => setTimeout(r, 100));
+    await blocker.query('COMMIT');
+    blocker.release();
+
+    const results = await Promise.allSettled([withdrawal, acceptance]);
+    assert.deepEqual(results.map(codeOf), ['ok', 'ok']);
+  });
+
+  test("a family's own lock never blocks the sweeper from offering that family a spot", async () => {
+    const [a, b] = await makeFamilies(2);
+    await fillArtSat();
+    await booking.joinWaitlist(a!.family, 'art-sat', a!.child, clock.now());
+    await booking.joinWaitlist(b!.family, 'art-sat', b!.child, clock.now());
+    await booking.simulateDropout('art-sat', 'community', clock.now());
+
+    // A request from family A holds A's row (as acceptOffer does) while the sweeper expires A's offer.
+    const request = await pool.connect();
+    await request.query('BEGIN');
+    await request.query(`SELECT 1 FROM families WHERE id = $1 ${booking.ROW_LOCK}`, [a!.family]);
+    const sweep = booking.sweepSection('art-sat', new Date(clock.now().getTime() + OFFER_MS)).then(() => 'done');
+    const outcome = await Promise.race([sweep, new Promise((r) => setTimeout(() => r('blocked'), 2000))]);
+    await request.query('COMMIT');
+    request.release();
+    await sweep;
+    assert.equal(outcome, 'done');
+  });
+
+  test('asking for an unknown family leaves no open transaction on a pooled connection', async () => {
+    const [f] = await makeFamilies(1);
+    for (let i = 0; i < 25; i++) assert.equal(await getState('nobody'), null);
+    const { rows } = await pool.query(
+      `SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = current_database() AND state LIKE 'idle in transaction%'`,
+    );
+    assert.equal(rows[0].n, 0);
+    await booking.addToCart(f!.family, 'art-wed', f!.child, clock.now());
+  });
+
+  test('a checkout across two sections keeps both waitlist promotions when it fails', async () => {
+    const [f, w1, w2] = await makeFamilies(3);
+    await pool.query(`INSERT INTO children (id, family_id, name, age) VALUES ('f-kid2', $1, 'kid2', 7)`, [f!.family]);
+    await pool.query(
+      `INSERT INTO registrations (section_id, family_id, confirmation, price_cents) VALUES ('swim2-tue', 'community', 'X-t1', 0), ('swim2-tue', 'community', 'X-t2', 0)`,
+    );
+    const h1 = await booking.addToCart(f!.family, 'art-sat', f!.child, clock.now());
+    const h2 = await booking.addToCart(f!.family, 'swim2-tue', 'f-kid2', clock.now());
+    await booking.joinWaitlist(w1!.family, 'art-sat', w1!.child, clock.now());
+    await booking.joinWaitlist(w2!.family, 'swim2-tue', w2!.child, clock.now());
+
+    clock.advance(HOLD_MS);
+    await assert.rejects(booking.checkout(f!.family, [h1.hold.id, h2.hold.id], clock.now()), { code: 'expired' });
+    assert.equal((await offerFor(w1!.family, 'art-sat'))?.kind, 'offer');
+    assert.equal((await offerFor(w2!.family, 'swim2-tue'))?.kind, 'offer');
+  });
+
+  test('moving a class earlier pulls open offers back inside the 10-minute cutoff', async () => {
+    const [a] = await makeFamilies(1);
+    await fillArtSat();
+    await booking.joinWaitlist(a!.family, 'art-sat', a!.child, clock.now());
+    const at = clock.now();
+    await booking.simulateDropout('art-sat', 'community', at); // 2-hour offer: class is weeks away
+    await booking.setSectionStart('art-sat', new Date(at.getTime() + 15 * MIN), at);
+    assert.ok((await offerFor(a!.family))!.expiresAt <= at.getTime() + 5 * MIN);
+  });
+});
+
 describe('expired-offer transaction bug (regression)', () => {
   test('accepting an expired offer still passes the spot to the next family, without waiting for the sweeper', async () => {
     const [a, b] = await makeFamilies(2);
@@ -443,6 +529,18 @@ describe('registration opening times', () => {
 });
 
 describe('HTTP API', () => {
+  test('another family’s waitlist offer is invisible too', async () => {
+    const [w] = await makeFamilies(1);
+    await fillArtSat();
+    await booking.joinWaitlist(w!.family, 'art-sat', w!.child, clock.now());
+    await booking.simulateDropout('art-sat', 'community', clock.now());
+    const res = await request(createApp()).get('/api/state').set('x-family-id', 'demo').expect(200);
+    const sat = res.body.sections.find((s: { sectionId: string }) => s.sectionId === 'art-sat');
+    assert.deepEqual(sat.holds, []);
+    assert.equal(sat.taken, 10);
+    assert.ok(!JSON.stringify(res.body).includes(w!.family));
+  });
+
   test('another family’s hold shows only as a taken spot, with no timer', async () => {
     const app = createApp();
     const res = await request(app).get('/api/state').set('x-family-id', 'demo').expect(200);

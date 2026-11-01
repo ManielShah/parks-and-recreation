@@ -17,7 +17,14 @@ export async function sweepOnce(): Promise<number> {
      SELECT section_id FROM waitlist_entries`,
     [now],
   );
-  for (const r of rows) await sweepSection(r.section_id, now);
+  for (const r of rows) {
+    // One section failing (a lock timeout, say) must not hold up every other section.
+    try {
+      await sweepSection(r.section_id, now);
+    } catch (err) {
+      console.error(`sweeper: section ${r.section_id} failed; retrying next tick`, err);
+    }
+  }
   await sendOpeningReminders(now);
   return rows.length;
 }

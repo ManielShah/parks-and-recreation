@@ -37,7 +37,11 @@ export async function getState(familyId: string): Promise<StateResponse | null> 
   try {
     await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
     const { rows: fam } = await c.query('SELECT id, name FROM families WHERE id = $1', [familyId]);
-    if (!fam[0]) return null;
+    if (!fam[0]) {
+      // Close the transaction before the connection goes back to the pool (found by the independent review).
+      await c.query('ROLLBACK');
+      return null;
+    }
 
     const [kids, sections, taken, holds, waitlist, regs, waits, notices, reminders] = await Promise.all([
       c.query('SELECT id, name, age FROM children WHERE family_id = $1 ORDER BY age, name', [familyId]),

@@ -12,15 +12,17 @@ export type Db = pg.PoolClient;
  */
 export async function tx<T>(fn: (c: Db) => Promise<T>): Promise<T> {
   const c = await pool.connect();
+  let broken: Error | undefined;
   try {
     await c.query('BEGIN');
     const out = await fn(c);
     await c.query('COMMIT');
     return out;
   } catch (err) {
-    await c.query('ROLLBACK').catch(() => {});
+    await c.query('ROLLBACK').catch((e: Error) => { broken = e; });
     throw err;
   } finally {
-    c.release();
+    // A connection whose rollback failed is in an unknown state: drop it rather than reuse it.
+    c.release(broken);
   }
 }
