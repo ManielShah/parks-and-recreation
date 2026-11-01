@@ -83,7 +83,7 @@ Behind it is the part that's hard to get right: **what happens when many familie
 | **What happens when you lose the race for the last seat** | Today the family sees "That section just filled up" and has to join the waitlist themselves. Joining them automatically is better for them, but it's a product decision (consent, notifications), so I didn't make it alone |
 | **A cancellation and refund policy** | Undecided, so the site says *[TO BE CONFIRMED]* rather than inventing one. Withdrawing frees the seat; refunds aren't built |
 | **Late registration after a session starts** | `starts_at` is the first class only. Joining a class already under way needs its own rules (pro-rating, instructor approval) |
-| **Updating the design** | The design still shows other families' holds, moves accepted offers through the cart, and has no section-level age limits. The code follows the corrected requirements; the design needs a pass to catch up |
+| **Updating the design** | The design still shows other families' holds and moves accepted offers through the cart (section age limits have been added to it). The code follows the corrected requirements; the design needs a pass to catch up |
 
 ## What I'd push back on and why
 
