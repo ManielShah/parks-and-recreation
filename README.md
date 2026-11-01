@@ -101,18 +101,19 @@ Every deferral below maps to a next step. **Sibling pricing is deferred intentio
 
 ## What I'd do next with more time
 
-| Order | Next step | Deferred item |
-|---|---|---|
-| 1 | Integrate secure sign-in, idempotent payments, delivery/retries, and reconciliation | D1 |
-| 2 | Give staff a queue-management screen; test opt-in, unattended last-call escalation to reduce missed enrollments | D2 |
-| 3 | Correct simulated-transaction copy in the UI; load-test peak openings and background recovery | D8 |
-| 4 | Offer one-tap waitlist signup after a lost final-seat race | D3 |
-| 5 | Agree on cancellation/refund policy before implementing refunds | D5 |
-| 6 | Add live updates when polling becomes a meaningful UX limitation | D4 |
-| 7 | Validate lottery/admission-window fairness with departments | D9 |
-| 8 | Add approved sibling pricing and mid-course enrollment rules | D6, D7 |
+**I'd prioritize improvements that convert waitlist demand into filled, paid seats—without skipping families or overbooking.** The first five investments directly improve the waitlist experience and its reliability. The IDs reference [what I deferred](#what-i-deferred-and-why); these proposals also preserve the [pushback decisions](#what-id-push-back-on-and-why).
 
-**What I would measure:** zero overbooking and unauthorized queue bypasses; waitlist-to-registration conversion; cancellation-to-refill time; offer expiry/decline rates; paid-seat utilization; and how many high-demand sections start with open seats while families remain queued. These are **proposed production measures**, not metrics measured by the prototype.
+| Order | Waitlist-first next step | Why it matters | Deferred item |
+|---|---|---|---|
+| **1** | **Recover last-minute seats automatically.** Add a staff queue screen, then pilot department-configurable, consent-based escalation when no one can manage a vacancy (for example, a short last-call invitation). Keep staff overrides and an auditable fairness exception. | A high-demand class shouldn't start with an empty seat while families are waiting; automation must not silently charge anyone. | D2 |
+| **2** | **Make every offer actionable.** Integrate reliable SMS/email delivery with retries, secure family identity, and idempotent accept-and-pay with payment-failure recovery. | A fair offer has little value if the family never receives it or cannot complete payment in time. These are also launch prerequisites. | D1 |
+| **3** | **Reduce waitlist signup friction.** Offer a one-tap, consent-based join when a parent loses the race for the last seat; confirm their actual queue position only after the join succeeds. | Converts disappointed registration attempts into demand that can fill future cancellations. | D3 |
+| **4** | **Stress-test the waitlist lifecycle.** Load-test simultaneous cancellations, expirations, promotions and last-call claims; improve monitoring and recovery for delayed workers and notifications; fix overlapping offer toasts and simulated-payment messaging. | Protects FIFO priority and zero overbooking at peak demand, and prevents spots getting stuck after failures. | D8 |
+| **5** | **Show timely waitlist and offer status.** Add live updates for newly available seats, queue changes and acceptance deadlines, while keeping the database authoritative. | Reduces stale-screen confusion and missed offers without weakening concurrency guarantees. | D4 |
+
+**After those waitlist improvements**, I'd tackle the remaining policy and breadth decisions: finalize cancellation/refund rules so released capacity is handled consistently (**D5**); evaluate fair admission windows or a lottery for high-demand registration openings (**D9**); and implement sibling discounts and joining an already-started course after their rules are agreed (**D6, D7**).
+
+**How I'd evaluate success:** waitlist-to-paid-registration conversion, cancellation-to-refill time, offer notification and acceptance latency, offer expiration rate, the number of high-demand classes starting with empty seats despite a queue, and **zero overbooking or unauthorized queue bypasses**. These are proposed production metrics, not results measured by this prototype.
 
 ## Tools & Process
 
