@@ -2,7 +2,7 @@
 
 # 🌲 Cedar Valley Parks & Recreation
 
-**Program registration that never overbooks a class and never lets a freed seat sit idle.**
+**Fair registration, capacity-safe booking, and faster waitlist fulfillment — without surprise charges.**
 
 ![React](https://img.shields.io/badge/React_18-TypeScript-1D5FD1?style=flat-square&logo=react&logoColor=white)
 ![Postgres](https://img.shields.io/badge/Postgres_16-row_locks-13362C?style=flat-square&logo=postgresql&logoColor=white)
@@ -68,62 +68,87 @@ npm run e2e
 
 ## What I built and why
 
-A family-facing registration site built from the provided design, on a React + TypeScript front end and a Postgres
-back end:
-- browse programs, pick a child, and choose a section. Age limits are set per section only (say, a 7–10 week and an 11–12 week of a basketball camp), and a section can be open to all ages. Pick several of your kids to see the programs with a section they can join together. A child can take more than one section of a program, never the same one twice
-- hold a seat in a cart for 5 minutes, then check out
-- join a waitlist when a section is full
-- manage everything under *My registrations*
+### The product decision
 
-Behind it is the part that's hard to get right: **what happens when many families want the same seat.**
+**A waitlist should do three things at once: treat families fairly, fill seats before class starts, and never sell the same seat twice.** For a payments-driven platform, an unfilled high-demand spot is a lost opportunity for the department and potential transaction revenue for Rec. But filling it by charging an unsuspecting parent is not the right tradeoff.
 
-| What | Why |
-|---|---|
-| **Every booking change locks the section's row, recounts seats, then writes.** A database trigger re-checks capacity at commit | Registrations, cancellations and waitlist acceptances can arrive at the same instant. Requests queue instead of failing: two families clicking two open seats both get one, and 25 clicking the last seat get exactly one winner. The trigger means even a future bug can't commit an overbooked class |
-| **A strict first-come-first-served waitlist.** Each freed seat is offered to one family at a time, and nobody else can take it meanwhile | Families who waited longest go first, and two families can never both accept the same seat |
-| **Offer windows shrink as class approaches.** 2 hours when the class is over a day away, then 30 minutes, then 10. Under 20 minutes, staff decide | A 2-hour window the night before class means an empty seat. Shorter windows keep the line moving, and the window is set from each section's real `starts_at` |
-| **Staff overrides** (API: `POST /api/staff/sections/:id/offer` and `/last-call`). Offer a seat to the next family with any window, or send a *last call* where the first waitlisted family to claim it wins | The last minutes before class need a human: strict order or fill the seat? A last call trades fairness for seat use, so a person makes that call. Families see last calls in the app |
-| **Charge only on acceptance.** *Accept and pay* registers and charges in one step; an ignored offer costs nothing | Families should never be charged for something they didn't confirm |
-| **Families can't see each other.** Other families' carts and offers reach the browser only as a "taken" count | Countdowns like "someone has this seat for 2:29" invite gaming and anxiety, and leak other families' activity |
-| **An audit trail.** Every join, offer, accept, decline, expiry and claim is recorded with who did it, in the same transaction as the change | Disputes ("I never got an offer!") need a record that can't disagree with the data |
-| **Shared design tokens and components** (`Button`, `Card`, `CapacityDots`, `OfferBanner`, …) | The design kept changing. New versions mostly touch tokens and a few components, not every screen |
+My MVP policy is **FIFO offers, reserved for one family at a time, with a deadline that shrinks as class start approaches**. Parents explicitly accept before a simulated payment and enrollment. This is a considered alternative to the stakeholder's *automatic promotion + automatic charge* request, **not** a claim that the request was part of the agreed core requirements.
+
+**Example — a class starts at 4:00 PM:** if a seat opens at 3:30 PM, the first waiting family receives an offer until 3:40 PM. If it expires, the next eligible family can receive a 10-minute offer, ending at 3:50 PM. Under 20 minutes to start, *new automatic offers stop*; the seat remains reserved for the waitlist, and staff can use a targeted offer or a first-to-claim last call. Staff intervention is implemented, but an **unattended last-minute fallback is not**—see [D2](#what-i-deferred-and-why).
+
+### Requirements and proof
+
+| Take-home consideration | Implemented behavior | Evidence |
+|---|---|---|
+| Browse programs and register a child | React catalog, section selection, 5-minute cart hold, checkout, My registrations | `client/src/`; browser tests |
+| Sections with limited capacity | Section-row transactions plus deferred database capacity checks; cart holds and registrations count against capacity | `server/src/booking.ts`, migration `004`; concurrent booking tests |
+| Full sections have waitlists | Section-specific FIFO queue, join/leave, single-family offers, accept/decline/expiry | `waitlist_entries`, `holds`, `waitlist_events` |
+| Age-gated sections | Age ranges live on sections; all-ages sections supported | Migration `006`; API and browser tests |
+| Household registration | One family can select multiple children and hold up to three seats; duplicate enrollment in one section is blocked | Child/family validation and cart tests |
+| Registration opens at a specified time | Server-side opening check plus reminders | `registration_opens_at`; tests |
+| Automatic promotion request | Auto-*offer* and reserve when a spot frees, **not auto-enroll/auto-charge** | See product pushback below |
+| Sibling discount request | **Deferred**, with pricing questions documented | [D6](#what-i-deferred-and-why) |
+
+### Safety and fairness are enforced server-side
+
+- **Concurrency and overbooking:** Booking changes lock a section row, recalculate availability inside a transaction, and use a deferred PostgreSQL capacity constraint as a backstop. Tests race 25 families for the final spot and mix withdrawals, waitlist claims and new requests.
+- **Queue integrity:** Normal promotion is FIFO. A walk-in cannot take an open spot while eligible waitlist entries remain. An intentional *staff-triggered* last call is the exception and is recorded.
+- **Recoverability:** Expired holds are settled before booking decisions; an expired offer rejected by the API still commits the transfer to the next person. A sweeper processes remaining expirations and retries sections independently.
+- **Audit and privacy:** Join, offer, accept, decline, expiry and last-call events are logged. Other families' hold details are not exposed to the parent-facing API.
+
+### Offer policy in this prototype
+
+| Time before first class | Automated offer | Who can act |
+|---|---|---|
+| More than 24 hours | Up to 2 hours | Parent accepts or declines |
+| 2–24 hours | Up to 30 minutes | Parent accepts or declines |
+| 20 minutes–2 hours | Up to 10 minutes | Parent accepts or declines |
+| Under 20 minutes | No new automated offer | Staff chooses FIFO offer or last call |
+
+Automatic offers never extend past **10 minutes before start**. Staff can deliberately override that limit; this is an operational exception, not an automatic promise. Times refer to the **first session start**, not each meeting of a multiweek class.
+
+### What I would measure
+
+**Correctness:** overbooking incidents (target zero), duplicate enrollments, and invalid priority bypasses. **Business/experience:** cancellation-to-replacement time, paid-seat utilization, offer acceptance/expiry, waitlist conversion, and how often a section reaches start time with a seat open and people waiting. These are proposed production metrics; the prototype does **not** capture real payments or revenue.
 
 ## What I deferred and why
 
-None of these change the agreed rules (capacity, first-come-first-served, offer windows, charge only on acceptance,
-privacy between families). Each one builds on them.
+The IDs below also appear in [the roadmap](#what-id-do-next-with-more-time). These are **not** features silently claimed as complete.
 
-| Deferred | Why |
-|---|---|
-| **Real payments, texts, emails and sign-in** | Integrations, not product logic. Each has a clear seam: payment hooks in `checkout` and `registerFromWaitlist`, the delivery outbox in `server/src/outbox.ts`, families identified by an `X-Family-Id` header and staff by a shared `STAFF_TOKEN` |
-| **A staff screen** | A nice-to-have. The staff overrides the requirements call for exist as API endpoints (`/api/staff/overview`, `/offer`, `/last-call`) with tests; a screen on top of them can come later |
-| **Joining the waitlist when you lose the race for the last seat** | Today the family sees "That section just filled up" and joins the waitlist themselves. A one-tap or automatic join is better for them, but needs a product decision (consent, notifications) |
-| **Live updates** (server-sent events) | Polling every 2 seconds was enough to prove the rules. The cost: a family can see a seat that was just taken, click, and lose. They lose safely, with no double booking and no charge, but it's disappointing |
-| **A cancellation and refund policy** | Undecided, so the site says *[TO BE CONFIRMED]* rather than inventing one. Withdrawing frees the seat; refunds aren't built |
-| **Sibling discount** | A nice-to-have, not core to registering safely. It touches pricing, checkout totals and refunds, and needs rules first (which sibling gets it, and whether it applies across programs and to waitlist acceptances). Prices are stored per registration, so it can be added without changing past orders |
-| **Late registration after a session starts** | `starts_at` is the first class only. Joining a class already under way needs its own rules (pro-rating, instructor approval) |
-| **Polish and extra hardening** | Two notices arriving together show only the newest, and a toast can cover the *Accept and pay* button. The sweeper's skip-a-failing-section path has no test. No load test yet |
+| ID | Deferred | Reason / prerequisite |
+|---|---|---|
+| **D1** | Real payments, SMS/email and identity | Simulated flows demonstrate business logic, not production integrations. Real charging needs payment idempotency, failure recovery, refunds and explicit customer consent; sign-in must replace `X-Family-Id` and the shared staff token |
+| **D2** | Staff UI and unattended last-minute escalation | Staff override and last-call **APIs are implemented**, but staff currently need API access. Under 20 minutes, an unattended waitlist may leave a seat empty. Automatic escalation or a time-limited broadcast needs a department-approved fairness policy |
+| **D3** | One-tap waitlist join after losing the last-seat race | The error explains that the class filled, but the parent must join separately. A streamlined, consent-based action would reduce abandonment; queue position is earned only when the join request succeeds |
+| **D4** | Live availability updates | Two-second polling is sufficient for this demo; it can show briefly stale availability. The server still rejects the losing booking safely |
+| **D5** | Cancellation/refund policy and refunds | The policy is unresolved; the UI says `[TO BE CONFIRMED]`. Withdrawal frees capacity, but no money is refunded |
+| **D6** | Sibling discounts | Explicitly out of MVP. Clarify whether 10%/20% applies per order, section, program, or household, and what happens if siblings join via different waitlist offers |
+| **D7** | Joining after a class has started | `starts_at` is the first meeting. Late enrollment may require instructor approval and prorating; this is separate from last-minute waitlist offers |
+| **D8** | Final production polish and reliability | Queue simultaneous toasts, keep notifications clear of the acceptance button, **mark simulated payment and delivery in the UI itself**, harden and load-test sweeps and peak registration |
+| **D9** | High-demand opening-time admission policy | Today's direct registration is a database-safe race. A lottery or bounded admission window may improve equity, but changes who gets priority and should be validated with departments first |
 
 ## What I'd push back on and why
 
-- **The design's "Register and charge me automatically" waitlist option.** *I did push back, and it's removed from the code and the design.* It charged families the moment a seat opened, without them accepting. That contradicts the rule that nobody is charged unless they accept their offer in time, and an unexpected charge is the fastest way to lose a family's trust.
-- **Showing families that someone else is holding a seat, with a countdown.** *Also changed.* It leaks other families' activity and encourages refreshing and pouncing.
-- **"Staff-managed under 20 minutes" depending on someone watching.** If nobody is at the desk, a seat with people waiting goes empty. I'd ask whether a last call should start automatically at 20 minutes, with staff able to cancel it.
-- **The two timing rules overlap.** The window table says staff take over under 20 minutes, while another requirement says automatic offers stop 10 minutes before class. I treated 10 minutes as a hard cap that no automatic offer may cross, and I'd confirm that reading.
-- **First-click-wins when registration opens for popular classes.** Whoever has the fastest connection wins. For high-demand openings I'd propose a short lottery window, with everyone else going onto the waitlist in draw order.
+These are explicit product decisions, not missing functionality presented as accidental omissions.
+
+1. **Automatic enrollment and charging on promotion — push back; propose explicit acceptance.** This *is* a stakeholder request. It could reduce vacancies, but also creates surprise charges, schedule conflicts and disputes, especially for families on multiple waitlists. The implementation offers and temporarily holds a spot, then charges **only in the simulated acceptance flow**. I would seek product/stakeholder approval for this departure, and measure conversion and unfilled-seat rates. I would not quietly enable auto-charge.
+2. **Showing another family's cart countdown — reject and already changed.** The original design revealed other families' temporary holds. The UI and API now show only aggregate taken capacity. Families need to know whether a seat is available, not who is holding it.
+3. **Requiring staff to notice every last-minute vacancy — push back on the operating assumption.** The current under-20-minute handoff prioritizes human judgment, but can leave demand unserved when staff are unavailable. [D2](#what-i-deferred-and-why) is an explicit follow-up: agree when to trigger an automatic last call, who is notified and whether first-to-claim is acceptable. Staff-initiated last call is already built and intentionally relaxes FIFO.
+4. **Using identical deadlines for every class — reject and already changed.** Two hours when class starts in 30 minutes wastes inventory. The implemented windows shrink with time, with a 10-minute automatic cutoff and a documented staff exception.
+5. **Equating first-click-wins with fairness at a popular registration opening — defer the policy decision.** Transaction locks stop overselling, not inequity from network speed. [D9](#what-i-deferred-and-why) considers a lottery only if the department wants a different opening-time allocation policy.
 
 ## What I'd do next with more time
 
-The deferred list above, in the order I'd tackle it:
+Ordered by **launch risk first**, then expected impact on filled seats and family experience. Each item maps to the deferred work above; none reverses a deliberate pushback without product signoff.
 
-1. **Real integrations.** A payment provider that charges a saved card on accept (a declined card rolls the acceptance back), SMS and email delivery, and family and staff sign-in. Without these it can't launch.
-2. **Polish and extra hardening.** Queue notification toasts so none are lost or cover *Accept and pay*, test the sweeper's failure path, and load-test a busy registration opening.
-3. **A staff screen** for the existing overrides, so staff don't need the API in the last minutes before class.
-4. **Joining the waitlist when you lose the race:** "Join the waitlist — you'd be #1" in the "just filled up" message, joined in the same request so nobody gets ahead of you.
-5. **Live updates** via server-sent events, so a taken seat disappears from every screen almost at once.
-6. **Cancellation and refunds**, once the policy is decided.
-7. **Sibling discount**, once its rules are agreed.
-8. **Late registration** for sessions already under way.
+1. **Make it launch-safe — D1.** Integrate authenticated families/staff, payment capture and refunds, and durable SMS/email delivery. Use idempotency and reconciliation rather than treating a database transaction as an external payment transaction.
+2. **Keep last-minute seats from going unused — D2.** Ship the staff UI; agree on a fallback when staff are absent and test whether opt-in last-call broadcasts actually improve conversion without harming trust.
+3. **Close prototype gaps — D8.** Correct in-app “charged/sent” language, toast overlap, and hardening; add peak-load and background-sweeper fault tests.
+4. **Reduce abandonment at the last-seat race — D3.** Add a consent-based one-tap waitlist CTA, with the actual queue position confirmed by the server.
+5. **Finalize cancellation economics — D5.** Define withdrawal deadlines, refund rules and how a released seat is re-offered.
+6. **Improve freshness — D4.** Replace polling with server-sent events when it meaningfully improves the experience.
+7. **Validate registration-opening fairness — D9.** Prototype a limited lottery/admission window if departments consider speed-based allocation unfair.
+8. **Expand policy breadth — D6 and D7.** Implement approved sibling pricing and mid-session enrollment after defining their financial and eligibility rules.
 
 ---
 
@@ -136,7 +161,7 @@ The deferred list above, in the order I'd tackle it:
 | **Claude design canvas** | The source design: an interactive prototype of the registration flow, which went through several iterations |
 | **Claude Code** (cloud session) | Read the design, then built the React client, Express API, Postgres schema and tests. It ran the app and drove a headless browser with Playwright to check each flow at desktop and phone widths, then turned those checks into the end-to-end tests that run on every push |
 | **A second Claude agent as reviewer** | Given only the code and the business rules, with fresh context and read-only access, and told to find ways to break it |
-| **Postgres + Node's test runner** | Every concurrency claim is tested by firing real parallel requests at a real database |
+| **ChatGPT (README reviewer)** | Reviewed the latest repository and compared the README against the supplied brief; clarified stakeholder pushback versus requirements, real versus simulated integrations, and aligned deferrals with the roadmap |\n| **Postgres + Node's test runner** | Tested parallel booking requests against a real database; CI runs the regression suite |
 
 How I worked with it:
 - **Requirements came from me in plain language; the AI turned them into code and tests.** Bugs were reproduced with a failing test before being fixed.
@@ -168,8 +193,8 @@ miss the point, as the first age fix did. Clicking through the real site myself 
 ### Asking the AI to break it
 
 I gave the second agent the business rules and asked it to find overbooking, line-skipping, deadlocks, data leaks and
-stuck seats. It wrote probe scripts against a scratch database. It confirmed:
-- no way to overbook a class, skip the line, or see another family's holds
+stuck seats. It wrote probe scripts against a scratch database. It confirmed for the tested normal booking flows:
+- no overbooking, unapproved line-skipping, or leakage of another family's holds (staff-authorized last call intentionally changes FIFO)
 - the fix for the expired-offer bug is correct
 
 It found **three real bugs that my 32 tests at the time had missed**:
