@@ -10,12 +10,9 @@
 
 </div>
 
-Families browse programs, hold a seat while they check out, and join a first-come-first-served waitlist. Each freed
-seat is offered to the next family in line, with less time to accept as the class gets closer.
-
-> [!NOTE]
-> Payments, texts and emails are **simulated**. No card is charged and nothing is sent: notices go to an outbox table
-> and the server log.
+Families browse programs, hold a seat while they check out, and join a first-come-first-served waitlist. A freed seat
+is offered to the next family in line, with less time to accept as the class gets closer. Staff take over in the
+last minutes before class.
 
 ## Quick start
 
@@ -38,8 +35,10 @@ npm run dev
 ```
 
 The family site runs at http://localhost:5173 and the staff view at http://localhost:5173/staff. The **Prototype
-controls** panel skips the clock, simulates other families, and moves a class's start time so you can watch the
-waitlist rules change.
+controls** panel moves a class's start time (25 h, 3 h, 1 h, 15 min) so you can watch offer windows shrink and staff
+take over.
+
+Tests run against a real Postgres:
 
 ```bash
 createdb -U parks parks_test
@@ -49,62 +48,131 @@ createdb -U parks parks_test
 npm test
 ```
 
-## The guarantees
+## Priorities
 
-| | How |
-|---|---|
-| **Never over capacity** | Every booking change locks the section's row in Postgres and recounts seats before writing. A database trigger re-checks at commit as a backstop. |
-| **Simultaneous clicks are safe** | Requests queue on the lock and each recounts when its turn comes. Two families, two seats: both get one. Twenty-five families, one seat: exactly one does, and the rest are told it just filled up. |
-| **Freed seats move fast** | Expired holds are released, and the seat offered to the next family, inside the same transaction as any request that touches the section. A 1-second background sweep covers quiet sections. |
-| **The line is fair** | Offers go strictly in waitlist order. While anyone is waiting, an open seat can't be taken by a family who isn't on the waitlist. |
-| **No surprise charges** | A waitlisted family is charged only when they press *Accept and pay* (or claim during a last call). |
-| **Families can't see each other** | Other families' holds and offers reach the browser only as a "taken" count, with no timers. |
+| | Change | Done | Evidence |
+|---|---|---|---|
+| **P0** | [Concurrency and overbooking prevention](#concurrency-and-overbooking) | ✅ | 25 families racing for one seat; cancellations, walk-ins and acceptances at once |
+| **P0** | [Dynamic waitlist expiration](#dynamic-waitlist-expiration) | ✅ | A test per window band and boundary |
+| **P0** | [Fix expired-offer transaction bug](#the-expired-offer-transaction-bug) | ✅ | Reproduced with a failing test, then fixed |
+| **P0** | [Waitlist fairness](#waitlist-fairness) | ✅ | Strict FIFO; walk-ins can't take a waitlist seat |
+| **P1** | [Last-minute waitlist optimization](#last-minute-optimization) | ✅ | Staff last call: simultaneous claims, exactly one wins |
+| **P1** | [Waitlist audit trail](#audit-trail) | ✅ | Events recorded in order, in the same transaction |
+| **P1** | [Clarify simulated payments and notifications](#whats-simulated) | ✅ | Table below, and labels in the app |
+| **P1** | [README and agentic development](#agentic-development) | ✅ | Tradeoffs, independent AI review, bugs and corrections |
 
-## Waitlist offer windows
+---
 
-| Time until the first class (`sections.starts_at`) | Time to accept |
+## P0
+
+### Concurrency and overbooking
+
+Registrations, cancellations, waitlist acceptances and last-call claims all go through one rule: **lock the
+section's row, settle it, recount, then write.**
+
+1. `SELECT … FOR UPDATE` on the section. Simultaneous requests queue instead of failing. This holds across several API servers.
+2. Inside the lock, expired holds are released and freed seats go to the waitlist.
+3. Seats are recounted (active registrations + live holds), and the request proceeds only if one is free.
+4. At commit, a deferred database trigger re-counts the section and rejects the transaction if it would be over capacity. This is a backstop against future bugs.
+
+Two families clicking two open seats both get one. Twenty-five clicking the last seat: one gets it, and the other 24
+are told it just filled up. Locks are always taken family → child → section, so requests can't deadlock.
+
+### Dynamic waitlist expiration
+
+Each section has `starts_at`, its first class. The offer window depends on how far away it is:
+
+| Time until the first class | Time to accept |
 |---|---|
 | More than 24 hours | 2 hours |
 | 2–24 hours | 30 minutes |
 | 20 minutes–2 hours | 10 minutes |
-| Under 20 minutes | No automatic offer: **staff decide** |
+| Under 20 minutes | No automatic offer: staff decide |
 
-No automatic offer is ever open in the last 10 minutes. Staff can override from `/staff` at any time:
-- offer the seat to the next family, with a window they choose
-- or send a **last call**, where everyone waiting is notified and the first to claim gets the seat
+When an offer expires, the seat goes straight to the next family. Their window is worked out again from the current
+time, so offers speed up as class approaches. No automatic offer can still be open in the last 10 minutes. From
+`/staff`, staff can override at any time by offering the seat to the next family with a window they choose.
+The rules live in `offerWindowMs` and `autoOfferExpiry` (`shared/src/index.ts`).
 
-Every join, offer, accept, decline, expiry and claim is recorded in an audit trail (`waitlist_events`).
+### The expired-offer transaction bug
 
-## Key decisions
+- **Cause.** A request that touched a section first released its expired offers and offered the seat to the next family. If the request then failed its own check (for example, accepting an offer that had just expired), throwing the error rolled back *everything*, including that handoff. The seat sat idle until the next background sweep.
+- **Fix.** Settling ends with `SAVEPOINT settled`. On a booking error, `bookingTx` rolls back only to the savepoint and commits, so the handoff survives the failed request.
+- **Proof.** Two regression tests: accepting after expiry hands the seat on with no sweep, and a failed add-to-cart keeps the expirations it processed.
 
-- **Row locks, not optimistic retries.** They're easy to reason about, and requests wait rather than fail. Hot sections serialize, which is fine at a city rec department's scale.
-- **Strict line order by default; last call only by staff choice.** Fairness comes first, and the shrinking windows limit empty seats. Notifying everyone at once fills seats faster but breaks line order, so a person decides.
-- **No auto-charge mode.** An earlier design had "Register and charge me automatically". We pushed back, because it charged families without them accepting, and removed it from the code and the design.
-- **Interpreting "under 20 minutes" alongside "stop 10 minutes before".** Automatic offers end at 20 minutes out. The 10-minute rule is a hard cap that no automatic offer can cross. Staff overrides are exempt.
+### Waitlist fairness
 
-## How it was built and checked
+- **Strict FIFO.** Each freed seat is offered to **one** family, the first in line. Nobody else is contacted, and two families can never both accept the same seat.
+- **The waitlist keeps priority.** While anyone is waiting, an open seat can't be added to the cart of a family who isn't on the waitlist.
+- **Balancing fairness and seat use.** Shrinking windows keep the line moving near class time. Breaking line order (last call, below) is a staff decision, not automatic.
 
-Built with Claude Code from the design artifact to the database.
-- **Concurrency is tested for real.** Requests are fired in parallel at a real Postgres, with no mocks.
-- **Bugs get a failing test first.** Each bug below except the sweeper one was reproduced with a failing test before it was fixed.
-- **An independent review.** A separate agent with fresh context reviewed the booking code without changing it. It found three real bugs the tests had missed:
-  1. **Deadlocks.** Inserting a row that references a family took a lock that clashed with the family-row lock, so a family accepting one child's offer while a withdrawal promoted their other child deadlocked. Fixed by locking family and child rows `FOR NO KEY UPDATE`, with a retry as a safety net.
-  2. **A broken database connection.** Looking up an unknown family left a read-only transaction open on a pooled connection, which broke the next request to use it. Fixed by rolling back first.
-  3. **A fragile sweeper.** One failing section stopped the whole background sweep. Each section is now swept on its own.
-- **Bug found before the review: expired offers.** A request that released an expired offer and then failed its own check rolled the release back, so the seat sat idle until the next background sweep. Fixed with a savepoint that keeps that work.
+## P1
+
+### Last-minute optimization
+
+Under 20 minutes out, staff can send a **last call**: every waitlisted family is notified, and the first to claim the
+seat gets it (and is charged). Concurrent claims queue on the section lock, so exactly one wins. It's refused while
+automatic offers are still running, so it never jumps the line when the line can still work.
+
+### Audit trail
+
+`waitlist_events` records every join, leave, offer, accept, decline, expiry, last call and claim. Each event stores
+who did it (family, system or staff) and when the offer expires. Events are written in the same transaction as the
+change, so the trail can't disagree with the data. The staff view shows the latest 50.
+
+### What's simulated
+
+| | Real today | Simulated, and where the integration goes |
+|---|---|---|
+| **Payments** | A registration exists only after *Pay*, *Accept and pay* or *Claim and pay*. Never automatically | No card is charged ("Saved card ending 4242 (demo)"). Hooks: `checkout`, `registerFromWaitlist` |
+| **Texts and emails** | Every notice is queued in `notifications` with SMS and email flags | Nothing is sent. `server/src/outbox.ts` logs each one |
+| **Sign-in** | | Families: `X-Family-Id` header. Staff: shared `STAFF_TOKEN` (open in dev when unset) |
+
+## Tradeoffs
+
+| Choice | Gain | Cost |
+|---|---|---|
+| Row lock per section | Simple, correct, requests wait instead of failing | Hot sections serialize (fine at rec-department scale) |
+| FIFO by default, last call by staff | Families keep their place | A seat can sit while someone holds an offer, and staff must act in the last 20 minutes |
+| Open seats reserved for the waitlist | Nobody skips the line | If staff don't act near class time, a seat can go unused |
+| Charge only on accept | No surprise charges | We declined the design's "Register and charge me automatically" mode |
+| 2-second polling | Simple | A family can see a seat that was just taken, click, and lose (safely) |
+| "Under 20 min" + "stop 10 min before" | We read 10 minutes as a hard cap no automatic offer may cross | Staff overrides are exempt by design |
+
+## Agentic development
+
+Built with Claude Code, from the design artifact to the database. How the work was checked:
+
+- **Concurrency is tested for real.** Parallel requests run against a real Postgres, with no mocks.
+- **Bugs get a failing test first.** The expired-offer bug and the review's findings (all but the sweeper one) were reproduced with a test that failed before the fix.
+- **Browser checks.** Every flow was clicked through with Playwright at desktop and phone widths.
+- **Independent AI review.** A separate agent with fresh context reviewed the booking code read-only against the rules above. It confirmed no overbooking, line-skipping or privacy leak, and that the savepoint fix is correct. It found three bugs the tests had missed.
+
+### Bugs found and corrections
+
+| Bug | Found by | Correction |
+|---|---|---|
+| Failed requests rolled back expired-offer handoffs | Stakeholder priority | Savepoint (above) |
+| Deadlock: inserting an offer for a family clashed with that family's own row lock | Independent review | Family and child rows locked `FOR NO KEY UPDATE`; deadlocks retried |
+| An unknown family ID left a read-only transaction on a pooled connection, breaking the next request | Independent review | Roll back before returning |
+| One failing section stopped the whole background sweep | Independent review | Each section swept on its own, with a lock timeout |
+| Offers weren't shortened when a class moved earlier | Independent review | Re-capped to the new 10-minute cutoff |
+| Once automatic offers stop near class time, a walk-in could have taken a seat the waitlist was owed | Designing the staff-managed window | Waitlist priority check, with a test |
+| The page showed other families' hold timers | Stakeholder | Server sends only a "taken" count |
+| The design charged waitlisted families without acceptance | Requirement review | Pushed back; removed from code and design |
 
 ## Not yet built
 
-- **Real payments, texts and sign-in.** The payment hooks are in `registerFromWaitlist` and `checkout`, delivery is in `server/src/outbox.ts`, and families are currently identified by an `X-Family-Id` header.
-- **Losing the race for the last seat.** A family can see a seat as open, click, and find it gone. Next step: offer "Join the waitlist — you'd be #1" in that message (or join automatically), and push live updates instead of 2-second polling.
-- **Smaller items.** A cancellation and refund policy (shown as *[TO BE CONFIRMED]*); toasts that cover the *Accept and pay* button; bringing the design up to date with charge-on-accept, hidden holds and the staff view.
+- **Real payments, texts, and family and staff sign-in.**
+- **Losing the race for the last seat.** Offer "Join the waitlist — you'd be #1" right in the "just filled up" message, and push live updates instead of polling.
+- **Smaller items.** A cancellation and refund policy (shown as *[TO BE CONFIRMED]*); toasts that cover the *Accept and pay* button; updating the design to match charge-on-accept, hidden holds and the staff view.
 
 ## Where to look
 
 ```
 server/src/booking.ts    every booking rule: holds, checkout, waitlist, offers, staff overrides
 shared/src/index.ts      offer windows (offerWindowMs, autoOfferExpiry), shared types
-server/migrations/       schema, including the capacity trigger and audit trail
-server/test/             38 tests against Postgres
-client/src/              React screens, components and design tokens
+server/migrations/       schema: starts_at, capacity trigger, audit trail
+server/test/             38 tests against Postgres, including regression tests for the bugs above
+client/src/              React screens (family site and /staff), components, design tokens
 ```
