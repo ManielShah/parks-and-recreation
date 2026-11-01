@@ -82,6 +82,7 @@ Behind it is the part that's hard to get right: **what happens when many familie
 | **Live updates** (server-sent events) | Polling every 2 seconds was enough to prove the rules. The cost: a family can see a seat that was just taken, click, and lose. They lose safely, with no double booking and no charge, but it's disappointing |
 | **What happens when you lose the race for the last seat** | Today the family sees "That section just filled up" and has to join the waitlist themselves. Joining them automatically is better for them, but it's a product decision (consent, notifications), so I didn't make it alone |
 | **A cancellation and refund policy** | Undecided, so the site says *[TO BE CONFIRMED]* rather than inventing one. Withdrawing frees the seat; refunds aren't built |
+| **Sibling discount** | A nice-to-have, not core to registering safely. It touches pricing, checkout totals and refunds, and would need rules first (which sibling gets the discount, and whether it applies across programs and to waitlist acceptances). Prices are already stored per registration, so it can be added later without changing past orders |
 | **Late registration after a session starts** | `starts_at` is the first class only. Joining a class already under way needs its own rules (pro-rating, instructor approval) |
 | **Updating the design** | The design still shows other families' holds and moves accepted offers through the cart (section age limits have been added to it). The code follows the corrected requirements; the design needs a pass to catch up |
 
