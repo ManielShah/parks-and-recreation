@@ -6,11 +6,16 @@
 
 ![React](https://img.shields.io/badge/React_18-TypeScript-1D5FD1?style=flat-square&logo=react&logoColor=white)
 ![Postgres](https://img.shields.io/badge/Postgres_16-row_locks-13362C?style=flat-square&logo=postgresql&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-41_passing-1E6B3E?style=flat-square)
+[![Tests](https://github.com/ManielShah/parks-and-recreation/actions/workflows/e2e.yml/badge.svg)](https://github.com/ManielShah/parks-and-recreation/actions/workflows/e2e.yml)
 
 [What I built](#what-i-built-and-why) · [Deferred](#what-i-deferred-and-why) · [Push back](#what-id-push-back-on-and-why) · [Next](#what-id-do-next-with-more-time) · [Tools & Process](#tools--process)
 
 </div>
+
+## Try it without a local server
+
+- **See it tested.** Every push runs the 41 API tests and 8 end-to-end tests in a real browser on GitHub Actions. Open the [latest run](https://github.com/ManielShah/parks-and-recreation/actions/workflows/e2e.yml) and download **playwright-report** for a video of each flow: browse and check out, section age limits, a waitlist offer accepted and paid, offer windows shrinking as class approaches, and the seat held for the waitlist in the last 20 minutes.
+- **Click through it yourself.** [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/ManielShah/parks-and-recreation?quickstart=1) starts Postgres, seeds the demo and opens the site in your browser. It takes a few minutes the first time. Run `npm test` in its terminal for the API tests.
 
 ## Quick start
 
@@ -43,6 +48,16 @@ createdb -U parks parks_test
 
 ```bash
 npm test
+```
+
+End-to-end tests in a browser (starts the site itself if it isn't running):
+
+```bash
+npx playwright install chromium
+```
+
+```bash
+npm run e2e
 ```
 
 > [!NOTE]
@@ -119,7 +134,7 @@ The deferred list above, in the order I'd tackle it:
 | Tool | How I used it |
 |---|---|
 | **Claude design canvas** | The source design: an interactive prototype of the registration flow, which went through several iterations |
-| **Claude Code** (cloud session) | Read the design, then built the React client, Express API, Postgres schema and tests. It ran the app and drove a headless browser with Playwright to check each flow at desktop and phone widths |
+| **Claude Code** (cloud session) | Read the design, then built the React client, Express API, Postgres schema and tests. It ran the app and drove a headless browser with Playwright to check each flow at desktop and phone widths, then turned those checks into the end-to-end tests that run on every push |
 | **A second Claude agent as reviewer** | Given only the code and the business rules, with fresh context and read-only access, and told to find ways to break it |
 | **Postgres + Node's test runner** | Every concurrency claim is tested by firing real parallel requests at a real database |
 
@@ -169,6 +184,7 @@ server/src/booking.ts    every booking rule: holds, checkout, waitlist, offers, 
 shared/src/index.ts      offer windows (offerWindowMs, autoOfferExpiry), shared types
 server/migrations/       schema: starts_at, capacity trigger, audit trail
 server/test/             41 tests against Postgres, including regression tests for the bugs above
+e2e/                     8 browser tests of the main flows (Playwright); .github/workflows runs both on every push
 client/src/              React screens, components, design tokens
 ```
 

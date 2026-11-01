@@ -146,7 +146,7 @@ export function ProgramDetail({ model }: { model: Model }) {
             {program.sections.map((s) => {
               const v = sectionView(model, program, s, selected?.kid ?? null, Boolean(selected?.ok));
               return (
-                <div className={styles.row} key={s.id}>
+                <div className={styles.row} key={s.id} data-testid={`section-${s.id}`}>
                   <div className={styles.when}>
                     <span className={styles.day}>{v.day}</span>
                     <span className={styles.time}>{v.time}</span>

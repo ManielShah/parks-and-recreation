@@ -1,0 +1,16 @@
+{
+  "name": "Cedar Valley registration",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+  "forwardPorts": [5173],
+  "portsAttributes": {
+    "5173": { "label": "Registration site", "onAutoForward": "openBrowser" },
+    "4000": { "label": "API", "onAutoForward": "silent" }
+  },
+  "postCreateCommand": "cp -n .env.example .env; npm install && npm run db:seed",
+  "postAttachCommand": "npm run dev",
+  "customizations": {
+    "codespaces": { "openFiles": ["README.md"] }
+  }
+}
