@@ -538,7 +538,7 @@ describe('section age limits', () => {
     const swim2 = res.body.programs.find((p: { id: string }) => p.id === 'swim2');
     assert.deepEqual(
       swim2.sections.map((s: { id: string; minAge: number | null; maxAge: number | null }) => [s.id, s.minAge, s.maxAge]),
-      [['swim2-tue', 6, 7], ['swim2-thu', null, null], ['swim2-sat', 7, 8]],
+      [['swim2-tue', 6, 7], ['swim2-thu', null, null], ['swim2-sat', 7, 8], ['swim2-sun', null, null]],
     );
   });
 });

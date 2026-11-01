@@ -13,16 +13,6 @@
   align-items: center;
   justify-content: center;
 }
-.ageBadge {
-  position: absolute;
-  top: 12px;
-  left: 12px;
-  font-size: 12px;
-  font-weight: 700;
-  padding: 4px 10px;
-  border-radius: var(--radius-pill);
-  background: var(--color-surface);
-}
 .body { padding: 18px; display: flex; flex-direction: column; gap: 8px; flex: 1 1 auto; }
 .name { font-size: 22px; line-height: 1.2; }
 .meta { font-size: 14px; color: var(--color-ink-muted); line-height: 1.45; }

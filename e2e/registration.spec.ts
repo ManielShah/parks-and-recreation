@@ -11,10 +11,15 @@ test('browse, filter by age, hold a seat and check out', async ({ page }) => {
   await open(page, '/');
   await expect(page.getByRole('heading', { name: 'Winter registration is open' })).toBeVisible();
 
-  // A program matches an age if any of its sections takes that age (open sections take any age).
+  // Programs carry no age of their own; a program matches if any section takes the child.
+  await expect(page.getByText(/^Ages /)).toHaveCount(0);
   await page.getByRole('button', { name: 'Leo · 10' }).click();
-  await expect(page.getByRole('heading', { name: '3 programs for age 10' })).toBeVisible();
-  await expect(page.getByRole('heading', { level: 3 })).toHaveText(['Swim Level 2', 'Art Studio: Clay & Paint', 'Youth Basketball Camp']);
+  await expect(page.getByRole('heading', { name: '4 programs for Leo' })).toBeVisible();
+
+  // Picking both kids keeps only programs with a section that takes them together.
+  await page.getByRole('button', { name: 'Maya · 7' }).click();
+  await expect(page.getByRole('heading', { name: '4 programs for Maya & Leo together' })).toBeVisible();
+  await expect(page.getByRole('heading', { level: 3 })).toHaveText(['Swim Level 2', 'Art Studio: Clay & Paint', 'Youth Basketball Camp', 'Climbing Wall']);
 
   await openProgram(page, 'art');
   await section(page, 'art-sat').getByRole('button', { name: 'Add Maya to cart' }).click();
@@ -32,7 +37,7 @@ test('browse, filter by age, hold a seat and check out', async ({ page }) => {
 
 test('ages are set per section: a limited section turns a child away, an open one takes them', async ({ page }) => {
   await openProgram(page, 'art');
-  await expect(page.getByText('Ages vary by section')).toBeVisible();
+  await expect(page.getByRole('main').getByText(/Ages vary|^Ages$/)).toHaveCount(0); // no program-level age
   await page.getByRole('button', { name: /^Leo/ }).click();
 
   const wed = section(page, 'art-wed'); // ages 5–7
@@ -42,6 +47,7 @@ test('ages are set per section: a limited section turns a child away, an open on
 
   const sat = section(page, 'art-sat'); // open to all ages
   await expect(sat.getByText('All ages', { exact: true })).toBeVisible();
+  await expect(sat.getByText('Maya & Leo can both join')).toBeVisible();
   await expect(sat.getByRole('button', { name: 'Add Leo to cart' })).toBeEnabled();
 });
 

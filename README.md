@@ -70,7 +70,7 @@ npm run e2e
 
 A family-facing registration site built from the provided design, on a React + TypeScript front end and a Postgres
 back end:
-- browse programs, pick a child, and choose a section. Age limits are set per section (say, a 9–10 week and an 11–12 week of a basketball camp), and a section can be open to all ages. A child can take more than one section of a program, never the same one twice
+- browse programs, pick a child, and choose a section. Age limits are set per section only (say, a 7–10 week and an 11–12 week of a basketball camp), and a section can be open to all ages. Pick several of your kids to see the programs with a section they can join together. A child can take more than one section of a program, never the same one twice
 - hold a seat in a cart for 5 minutes, then check out
 - join a waitlist when a section is full
 - manage everything under *My registrations*

@@ -1,4 +1,4 @@
-import { CART_MAX, autoOfferExpiry, formatDuration, isAgeEligible, isRegistrationOpen, programAgeLabel, programSuits, sectionAgeLabel, type Hold, type Kid, type Program, type Section, type SectionLive, type StateResponse, type Tone } from '@parks/shared';
+import { CART_MAX, autoOfferExpiry, formatDuration, isAgeEligible, isRegistrationOpen, programSuits, sectionAgeLabel, type Hold, type Kid, type Program, type Section, type SectionLive, type StateResponse, type Tone } from '@parks/shared';
 import { countdown, money, plural, when } from './format';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -81,10 +81,7 @@ const INVOLVEMENT_LABEL: Record<NonNullable<Involvement>, string> = {
  * they aren't already in it. Being in one section (say, registered Tuesdays) doesn't block another.
  */
 export function kidStatus(m: Model, kid: Kid, program: Program): { ok: boolean; reason: string } {
-  if (!programSuits(kid.age, program)) {
-    const label = programAgeLabel(program);
-    return { ok: false, reason: label.startsWith('Ages ') && label !== 'Ages vary by section' ? `${label} only` : `Not offered for age ${kid.age}` };
-  }
+  if (!programSuits(kid.age, program)) return { ok: false, reason: `No section for age ${kid.age}` };
   const busy = program.sections.map((s) => ({ s, inv: involvement(m, kid.id, s.id) })).filter((x) => x.inv);
   const busyLabel = busy[0] ? `${INVOLVEMENT_LABEL[busy[0].inv!]} ${busy[0].s.day}` : null;
   const free = program.sections.some((s) => isAgeEligible(kid.age, s) && !involvement(m, kid.id, s.id));
@@ -144,6 +141,8 @@ export interface SectionView {
   firstClass: string;
   /** "Ages 6–7", or "All ages" for an open section in a program where others have limits. */
   ages: string | null;
+  /** "Maya & Leo can both join" when every child in the family fits this section's ages. */
+  together: string | null;
   dots: DotKind[];
   capacityLabel: string;
   note: string;
@@ -231,6 +230,10 @@ export function sectionView(m: Model, program: Program, section: Section, kid: K
     day: section.day,
     time: section.time,
     firstClass: when(section.startsAt),
+    together:
+      m.state.kids.length > 1 && m.state.kids.every((k) => isAgeEligible(k.age, section))
+        ? `${m.state.kids.map((k) => k.name).join(' & ')} can ${m.state.kids.length === 2 ? 'both' : 'all'} join`
+        : null,
     ages,
     dots,
     capacityLabel: `${l.taken - mineReg} taken, ${dots.filter((d) => d === 'mine').length} yours, ${Math.max(open, 0)} open, out of ${l.capacity} spots`,

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { classSize, programAgeLabel } from '@parks/shared';
+import { classSize } from '@parks/shared';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Button } from '../components/Button';
 import { Card, CardTitle } from '../components/Card';
@@ -77,11 +77,6 @@ export function ProgramDetail({ model }: { model: Model }) {
               <h1 className={styles.title}>{program.name}</h1>
               <p className={styles.desc}>{program.description}</p>
               <dl className={styles.facts}>
-                <div className={styles.fact}>
-                  <dt>Ages</dt>
-                  <dd>{programAgeLabel(program)}</dd>
-                  <dd className={styles.factNote}>Set per section, below</dd>
-                </div>
                 <div className={styles.fact}><dt>Dates</dt><dd>{program.dates}</dd></div>
                 <div className={styles.fact}><dt>Location</dt><dd>{program.location}</dd></div>
                 <div className={styles.fact}><dt>Fee</dt><dd>{money(program.priceCents)}</dd></div>
@@ -152,6 +147,7 @@ export function ProgramDetail({ model }: { model: Model }) {
                     <span className={styles.time}>{v.time}</span>
                     <span className={styles.firstClass}>First class {v.firstClass}</span>
                     {v.ages && <span className={styles.ageTag}>{v.ages}</span>}
+                    {v.together && <span className={styles.togetherTag}>{v.together}</span>}
                   </div>
                   <div className={styles.status}>
                     <CapacityDots dots={v.dots} label={v.capacityLabel} />

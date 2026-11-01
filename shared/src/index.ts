@@ -261,16 +261,7 @@ export function programSuits(age: number, program: Pick<Program, 'sections'>): b
   return program.sections.some((s) => isAgeEligible(age, s));
 }
 
-/**
- * A program-level summary of its sections' ages: "All ages" when no section has limits,
- * "Ages 6–8" (the span) when every section has both ends set, otherwise "Ages vary by section".
- */
-export function programAgeLabel(program: Pick<Program, 'sections'>): string {
-  const limited = program.sections.filter((s) => s.minAge !== null || s.maxAge !== null);
-  if (limited.length === 0) return 'All ages';
-  const bounded = program.sections.every((s) => s.minAge !== null && s.maxAge !== null);
-  if (!bounded) return 'Ages vary by section';
-  const min = Math.min(...program.sections.map((s) => s.minAge!));
-  const max = Math.max(...program.sections.map((s) => s.maxAge!));
-  return `Ages ${min}–${max}`;
+/** A program suits several children together if one of its sections takes all of them. */
+export function programSuitsAll(ages: number[], program: Pick<Program, 'sections'>): boolean {
+  return program.sections.some((s) => ages.every((age) => isAgeEligible(age, s)));
 }

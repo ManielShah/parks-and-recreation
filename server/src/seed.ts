@@ -81,6 +81,7 @@ export const SEED_PROGRAMS: SeedProgram[] = [
       { id: 'swim2-tue', day: 'Tuesdays', time: '4:00–5:00 pm', ages: [6, 7], start: { day: 1, hour: 16 }, enrolled: 3 },
       { id: 'swim2-thu', day: 'Thursdays', time: '4:00–5:00 pm', start: { day: 3, hour: 16 }, enrolled: 5 },
       { id: 'swim2-sat', day: 'Saturdays', time: '10:00–11:00 am', ages: [7, 8], start: { day: 5, hour: 10 }, enrolled: 6, waitlist: 2 },
+      { id: 'swim2-sun', day: 'Sundays', time: '11:00 am–12:00 pm', start: { day: 6, hour: 11 }, enrolled: 2 },
     ],
   },
   {
@@ -90,6 +91,7 @@ export const SEED_PROGRAMS: SeedProgram[] = [
     description: 'Hand-building with clay, then glazing and painting what they made. All materials included. Wear clothes that can get messy.',
     sections: [
       { id: 'art-wed', day: 'Wednesdays', time: '3:30–5:00 pm', ages: [5, 7], start: { day: 2, hour: 15, minute: 30 }, enrolled: 3 },
+      { id: 'art-fri', day: 'Fridays · family studio', time: '4:00–5:30 pm', start: { day: 4, hour: 16 }, enrolled: 2 },
       { id: 'art-sat', day: 'Saturdays', time: '1:00–2:30 pm', start: { day: 5, hour: 13 }, enrolled: 9 },
     ],
   },
@@ -99,16 +101,19 @@ export const SEED_PROGRAMS: SeedProgram[] = [
     location: 'Central Rec Gym', price: 140, dates: 'Winter break, Mon–Fri',
     description: 'A week of dribbling, passing and small-sided games. Bring a water bottle and court shoes.',
     sections: [
-      { id: 'bball-w1', day: 'Jan 5–9', time: 'Mon–Fri, 9 am–12 pm', ages: [9, 10], start: { day: 0, hour: 9 }, enrolled: 0 },
+      { id: 'bball-w1', day: 'Jan 5–9', time: 'Mon–Fri, 9 am–12 pm', ages: [7, 10], start: { day: 0, hour: 9 }, enrolled: 0 },
       { id: 'bball-w2', day: 'Jan 12–16', time: 'Mon–Fri, 9 am–12 pm', ages: [11, 12], start: { day: 7, hour: 9 }, enrolled: 0 },
     ],
   },
   {
-    id: 'climb', name: 'Teen Climbing', category: 'Sports',
+    id: 'climb', name: 'Climbing Wall', category: 'Sports',
     capacity: 6, capacityNote: '1 belay instructor per 3 climbers, 2 instructors', opensInDays: 14,
     location: 'Central Rec Climbing Wall', price: 110, dates: 'Jan 8 – Feb 26',
-    description: 'Top-rope climbing with certified staff, plus knots and belay basics. Harness and shoes provided.',
-    sections: [{ id: 'climb-thu', day: 'Thursdays', time: '6:00–7:30 pm', ages: [13, 17], start: { day: 3, hour: 18 }, enrolled: 0 }],
+    description: 'Top-rope climbing with certified staff, plus knots and belay basics. Thursdays are for teens; the Saturday family climb is open to all ages, and kids under 13 climb with a parent. Harness and shoes provided.',
+    sections: [
+      { id: 'climb-thu', day: 'Thursdays', time: '6:00–7:30 pm', ages: [13, 17], start: { day: 3, hour: 18 }, enrolled: 0 },
+      { id: 'climb-sat', day: 'Saturdays · family climb', time: '10:00–11:30 am', start: { day: 5, hour: 10 }, enrolled: 1 },
+    ],
   },
 ];
 

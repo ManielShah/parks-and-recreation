@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { classSize, programAgeLabel, type Program } from '@parks/shared';
+import { classSize, type Program } from '@parks/shared';
 import { money } from '../domain/format';
 import { programAvailability, type Model } from '../domain/model';
 import { Button } from './Button';
@@ -15,7 +15,6 @@ export function ProgramCard({ model, program }: { model: Model; program: Program
     <article className={styles.card}>
       <div className={styles.band} style={{ background: theme.bg, color: theme.ink }}>
         <CategoryIcon category={program.category} />
-        <span className={styles.ageBadge} style={{ color: theme.ink }}>{programAgeLabel(program)}</span>
       </div>
       <div className={styles.body}>
         <span className="eyebrow">{program.category}</span>
