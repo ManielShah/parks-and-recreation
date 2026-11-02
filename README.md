@@ -129,10 +129,15 @@ The take-home asks not only what AI produced, but what I challenged and changed.
 
 ### Where I corrected or overrode the AI
 
-- **Automatic charge:** The initial design/implementation included “register and charge automatically.” I challenged the consent and trust implications and removed it in favor of explicit acceptance.
-- **Accept then checkout:** I changed a two-step offer flow to **accept and register in one action** (payment remains mocked).
-- **Privacy:** I rejected “another family is holding this seat” UI with a visible countdown and removed that information from family-facing API responses.
-- **Requirements over implementation:** The first age-range change still showed program ages, and a child was blocked from joining a second section of the same program. Manual browser testing exposed both despite passing tests. I had ages moved to sections and allowed multiple distinct sections.
+I focused my review on **cross-cutting failure scenarios**, where code can pass its own tests yet still violate the product's promises:
+
+- **Auto-promotion versus payment consent.** The first implementation followed the stakeholder's request to automatically enroll and charge whoever was next in line. I rejected the assumption that filling a seat justifies an unexpected charge, and changed the flow to a **FIFO offer that reserves inventory**, followed by **one-step accept-and-register** (with simulated payment). This preserves family choice without sending the seat back through an additional cart checkout.
+- **Strict queue order versus a class starting soon.** A fixed two-hour invitation could leave a high-demand class half an hour from starting with an unusable seat. I directed **time-to-class offer windows** (2 hours, 30 minutes, or 10 minutes), capped automatic offers 10 minutes before start, and made **staff-triggered last call** an explicit, audited exception to FIFO. During last call, simultaneous claims still compete through the same capacity-safe transaction.
+- **Overbooking under mixed concurrent operations, not just two clicks.** I pushed beyond a simple last-seat race: imagine cancellations, cart expirations, checkout, waitlist acceptance, and last-call claims interleaving. The system now serializes seat changes with **section-row locks**, rejects waitlist bypass, and uses a **deferred PostgreSQL capacity constraint** as a second safeguard. The tests exercise mixed operations and concurrent claims, not just sequential enrollment.
+- **A failed request must not undo a valid waitlist handoff.** An expired-offer acceptance could first release the seat and offer it to the next family, then throw an error that rolled the entire transaction back—quietly stranding the spot. I changed the transaction boundary so **settlement survives the rejected acceptance** via a savepoint, and added a regression test for that failure path.
+- **Application lock order was not enough to establish deadlock safety.** Rather than accepting the AI's “always lock in this order” explanation, I used an independent adversarial review to test concurrent sibling offers and withdrawals. It exposed implicit PostgreSQL foreign-key locks that could deadlock; the fix used **`FOR NO KEY UPDATE`**, bounded retries, and regression coverage.
+
+The distinction: **I didn't simply accept AI-generated features or green tests. I challenged their business assumptions, failure boundaries, and concurrency guarantees, then required executable evidence.**
 
 ### I asked another AI to try to break the system
 
